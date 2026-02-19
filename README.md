@@ -6,28 +6,27 @@ Python desktop app through an Arduino and a 2-channel relay module.
 Supports all three center-position variants: **C** (Closed), **E** (Exhaust), **P** (Pressure).
 
 **Features:**
-- Modern dark-themed Python UI (customtkinter)
+- Professional dark-themed Python UI (customtkinter, Tailwind slate palette)
+- Always-visible state banner — changes color to match current valve position
 - 3 hardware buttons for standalone control (A / B / Center)
 - EEPROM state persistence — survives brown-out resets from relay power draw
 - EMI-guarded button inputs — relay switching noise can't trigger false presses
-- COM port auto-detection and live state sync
-- Sequence builder for automated valve patterns
+- COM port auto-detection with single-reset probe handoff (no double solenoid click)
+- Table-based sequence builder with reordering, run-once, and loop modes
 
 ---
 
-## Future Improvements
+## Completed Improvements
 
-- **External 5V power for relay module** — The relay coils can draw enough
-  current to brown-out the Arduino (especially Leonardo/Pro Micro). The
-  current sketch works around this by saving state to EEPROM and restoring
-  it after reset. The proper long-term fix is to power the relay module VCC
-  from a **separate 5V source** (e.g. a USB phone charger, or a 7805
-  regulator off the 12V PSU). Keep IN1, IN2, and GND connected to the
-  Arduino — only move VCC to external power.
+- **External 5V power for relay module** — Relay module VCC is now powered
+  from a separate 5V source, eliminating Arduino brown-outs from relay coil
+  current draw. IN1, IN2, and GND remain connected to the Arduino.
+
+## Future Improvements
 
 - **MOSFET drivers instead of relay module** — A logic-level MOSFET module
   (e.g. IRF520) draws almost no current from the Arduino and switches
-  silently with no EMI. This eliminates the brown-out and noise issues
+  silently with no EMI. This would eliminate the remaining relay noise
   entirely.
 
 ---
@@ -116,7 +115,7 @@ The difference is purely mechanical (internal spool design):
   │ Python  │             │   Pin 2/3/4 ─ Buttons A/B/C ─ GND         │
   │   UI    │             │   Pin 7 ──────────► Relay Module IN1      │
   │         │             │   Pin 8 ──────────► Relay Module IN2      │
-  │         │             │   5V ─────────────► Relay Module VCC      │
+  │         │             │   (Ext 5V) ───────► Relay Module VCC      │
   └─────────┘             │   GND ────────┬──► Relay Module GND      │
                           └───────────────┼──────────────────────────┘
                                           │
@@ -168,7 +167,7 @@ Use jumper wires. These carry only 5V logic signals.
 
 | Arduino Pin | → | Relay Module Pin | Purpose |
 |-------------|---|-----------------|---------|
-| **5V** | → | **VCC** | Powers relay module coils (see Future Improvements for external power) |
+| **External 5V** | → | **VCC** | Powers relay module coils from a separate 5V source (not Arduino 5V) |
 | **GND** | → | **GND** | Shared ground |
 | **Pin 7** | → | **IN1** | Controls Relay 1 (Solenoid A) |
 | **Pin 8** | → | **IN2** | Controls Relay 2 (Solenoid B) |
@@ -294,8 +293,11 @@ python valve_ui.py
 ### Step 4: Using the UI
 
 1. Click **Refresh** to list ports, or **Detect Arduino** to auto-select a likely COM port
-2. Select your **valve variant** (C / E / P) from the Model dropdown
-3. Click **Connect** — wait ~2 seconds for Arduino handshake
+   - Detect keeps the serial connection open so the following Connect reuses
+     it — the Arduino only resets once (no double solenoid click)
+2. Select your **valve variant** (C / E / P) from the Variant dropdown
+3. Click **Connect** — instant if Detect already found the port, otherwise
+   wait ~2 seconds for Arduino handshake
 4. (Optional) click **Read State** to sync UI with controller state
 5. Use manual controls:
 
@@ -306,16 +308,16 @@ python valve_ui.py
 | **POSITION B** | Orange | Energizes Solenoid B: P → B, A → Exhaust |
 
 6. Use the **Sequence Builder** to automate repeatable patterns:
-   - Add a block (`A`, `B`, or `C`) + duration
-   - Drag blocks to reposition
-   - Select a block and click **Apply to Selected** to edit it
-   - Click **Connect**, then click another block to create flow order
-   - Use **Disconnect** to remove links on selected block
-   - Remove/Clear blocks or load a demo flow
-   - Run once, run loop, and stop safely
-   - If blocks are not fully connected, execution order falls back to layout order
-7. Use `Ctrl +`, `Ctrl -`, `Ctrl 0`, and mouse wheel scrolling to fit UI to your screen
-8. The large status indicator shows current valve state and source (UI/hardware/sequence)
+   - Pick a state (`A`, `B`, or `C`) and a duration, then click **+ Add**
+   - Steps appear in a table — select a row and use **Edit** to change it
+   - Reorder with **Up** / **Down** buttons
+   - **Remove** deletes the selected step, **Clear** empties the table
+   - **Demo** loads a sample 5-step sequence
+   - **Run Once** executes the table top-to-bottom, **Loop** repeats until stopped
+   - **Stop** halts the sequence and optionally returns to Center
+7. The fixed **state banner** at the top always shows the current valve
+   position with a color-coded background (blue / orange / green)
+8. Use `Ctrl +`, `Ctrl -`, `Ctrl 0`, and mouse wheel scrolling to fit UI to your screen
 9. Click **Disconnect** or close the window — the valve safely returns to CENTER
 
 ---
@@ -326,6 +328,7 @@ python valve_ui.py
 |------|-----|
 | Both solenoids never ON simultaneously | `applyOutputs()` always sets one LOW before the other HIGH |
 | EEPROM state persistence | If the relay power draw resets the Arduino, it restores the last state on boot |
+| Single-reset probe handoff | Detect Arduino keeps the serial connection open so Connect reuses it — only one Arduino reset |
 | Disconnect sends CENTER first | Closing the UI de-energises both solenoids before dropping serial |
 | NO relay terminals used | If Arduino resets or loses power, relays open → solenoids OFF |
 | Onboard LED (Pin 13) mirrors state | Quick visual — LED ON = a solenoid is energised |
@@ -349,7 +352,7 @@ python valve_ui.py
 | UI shows "No response" | Arduino not running sketch | Re-upload the sketch, check baud is 9600 |
 | Sequence stops unexpectedly | Hardware button press or serial interruption | Check status bar message, reconnect if needed |
 | Relay chatters / flickers | Missing common ground | Connect 12V PSU GND to Arduino GND |
-| Arduino resets when relay switches | Relay module drawing too much from 5V | Power relay VCC from external 5V (see Future Improvements) |
+| Arduino resets when relay switches | Relay module drawing too much from 5V | Power relay VCC from external 5V (see Completed Improvements) |
 | Hardware A/B/C buttons do nothing | Button wired to wrong pin or not to GND | Verify Pin 2=A, Pin 3=B, Pin 4=C, all using INPUT_PULLUP wiring |
 | Buttons trigger wrong state after relay click | EMI from relay switching | EMI guard (400ms) should handle this; increase `EMI_GUARD_MS` if needed |
 
@@ -371,7 +374,7 @@ python valve_ui.py
   Pin 4  ── Btn C ── GND
   Pin 7  ──────────►   IN1
   Pin 8  ──────────►   IN2
-  5V     ──────────►   VCC
+  Ext 5V ──────────►   VCC  (separate 5V source, NOT Arduino 5V)
   GND    ──────────►   GND
                        Relay 1 COM  ◄────  12V PSU (+)
                        Relay 1 NO   ────►  Sol A (+)

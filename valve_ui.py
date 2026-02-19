@@ -7,7 +7,7 @@ Usage:    python valve_ui.py
 
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 import serial
 import serial.tools.list_ports
 import threading
@@ -27,14 +27,17 @@ class ValveController:
         self._reader_thread = None
         self._running = False
 
-    def connect(self, port, baudrate=9600, timeout=0.1):
+    def connect(self, port, baudrate=9600, timeout=0.1, existing_ser=None):
         with self.lock:
             if self.ser and self.ser.is_open:
                 self._stop_reader()
                 self.ser.close()
-            self.ser = serial.Serial(port, baudrate, timeout=timeout)
-            # Arduino boards typically reset on serial open.
-            time.sleep(2)
+            if existing_ser and existing_ser.is_open:
+                self.ser = existing_ser
+                self.ser.timeout = timeout
+            else:
+                self.ser = serial.Serial(port, baudrate, timeout=timeout)
+                time.sleep(2)
             self.ser.reset_input_buffer()
             self._start_reader()
 
@@ -158,7 +161,11 @@ class ValveController:
 
     @staticmethod
     def probe_port(port, baudrate=9600):
-        """Try a short handshake on a port and return (matched, response_text)."""
+        """Try a short handshake. Returns (matched, response_text, ser_or_None).
+
+        On success the serial connection is kept open so the caller can
+        hand it straight to connect() and avoid a second Arduino reset.
+        """
         ser = None
         try:
             ser = serial.Serial(port, baudrate, timeout=0.25)
@@ -176,25 +183,29 @@ class ValveController:
                 if not line:
                     continue
                 if line.startswith("STATE:"):
-                    return True, line
+                    return True, line, ser
                 if line.startswith("READY") and not saw_ready:
                     saw_ready = True
                     ser.write(b"?")
 
-            return False, "No STATE response"
-        except Exception as exc:
-            return False, str(exc)
-        finally:
             if ser and ser.is_open:
                 try:
                     ser.close()
                 except Exception:
                     pass
+            return False, "No STATE response", None
+        except Exception as exc:
+            if ser and ser.is_open:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+            return False, str(exc), None
 
 
 class ValveApp(ctk.CTk):
-    BASE_WIDTH = 900
-    BASE_HEIGHT = 760
+    BASE_WIDTH = 920
+    BASE_HEIGHT = 780
     MIN_WIDTH = 780
     MIN_HEIGHT = 620
     BASE_UI_SCALE = 0.95
@@ -222,7 +233,15 @@ class ValveApp(ctk.CTk):
         },
     }
 
-    STATE_COLORS = {"A": "#42A5F5", "B": "#FFA726", "C": "#66BB6A"}
+    STATE_COLORS = {"A": "#60a5fa", "B": "#fb923c", "C": "#4ade80"}
+    STATE_BANNER_BG = {"A": "#1e3a5f", "B": "#431407", "C": "#14532d"}
+    BANNER_OFF_BG = "#1e293b"
+
+    CARD = "#1e293b"
+    CARD_BORDER = "#334155"
+    TEXT_SEC = "#94a3b8"
+    TEXT_MUTED = "#64748b"
+
     ARDUINO_HINTS = ("arduino", "ch340", "wch", "cp210", "ftdi", "usb serial")
     ARDUINO_VIDS = {0x2341, 0x2A03, 0x1A86, 0x10C4, 0x0403}
 
@@ -255,16 +274,9 @@ class ValveApp(ctk.CTk):
         self.sequence_stop_event = threading.Event()
         self.sequence_thread = None
         self.sequence_total_steps = 0
-        self.sequence_nodes = {}
-        self.sequence_links = {}
-        self.sequence_incoming = {}
-        self.selected_sequence_node = None
-        self.pending_link_source = None
-        self.next_sequence_node_id = 1
-        self.last_added_sequence_node = None
-        self.drag_node_id = None
-        self.drag_last_x = 0
-        self.drag_last_y = 0
+
+        self._probed_serial = None
+        self._probed_port = None
 
         self._build_ui()
         self._refresh_zoom_label()
@@ -277,466 +289,426 @@ class ValveApp(ctk.CTk):
         self._poll_results()
         self._poll_button_events()
 
+    def _card(self, parent, **kw):
+        return ctk.CTkFrame(
+            parent,
+            corner_radius=10,
+            fg_color=kw.pop("fg_color", self.CARD),
+            border_width=1,
+            border_color=kw.pop("border_color", self.CARD_BORDER),
+            **kw,
+        )
+
+    def _section_label(self, parent, text):
+        return ctk.CTkLabel(
+            parent,
+            text=text.upper(),
+            font=("Segoe UI", 10, "bold"),
+            text_color=self.TEXT_MUTED,
+            anchor="w",
+        )
+
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
-        self.page = ctk.CTkScrollableFrame(
-            self, corner_radius=0, fg_color="transparent"
+        # ── Fixed top: state banner ──
+        top = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        top.grid(row=0, column=0, sticky="ew")
+        top.grid_columnconfigure(0, weight=1)
+
+        title_bar = ctk.CTkFrame(
+            top, corner_radius=0, fg_color=self.CARD, height=42
         )
-        self.page.grid(row=0, column=0, sticky="nsew")
-        self.page.grid_columnconfigure(0, weight=1)
-        self.page.grid_rowconfigure(5, weight=1)
-
-        # Header
-        header = ctk.CTkFrame(self.page, corner_radius=12)
-        header.grid(row=0, column=0, padx=16, pady=(16, 6), sticky="ew")
-        header.grid_columnconfigure(0, weight=1)
-        header.grid_columnconfigure(1, weight=0)
+        title_bar.grid(row=0, column=0, sticky="ew")
+        title_bar.grid_columnconfigure(0, weight=1)
+        title_bar.grid_propagate(False)
 
         ctk.CTkLabel(
-            header,
+            title_bar,
             text="Airtec 4V130 Valve Controller",
-            font=("Segoe UI", 21, "bold"),
-        ).grid(row=0, column=0, padx=16, pady=(14, 2), sticky="w")
-        ctk.CTkLabel(
-            header,
-            text="Connect Arduino, drive A/B/Center, and run repeatable valve sequences.",
-            font=("Segoe UI", 11),
-            text_color="#A8A8A8",
-        ).grid(row=1, column=0, padx=16, pady=(0, 12), sticky="w")
+            font=("Segoe UI", 14, "bold"),
+            text_color="#e2e8f0",
+        ).grid(row=0, column=0, padx=20, pady=10, sticky="w")
 
-        zoom_bar = ctk.CTkFrame(header, fg_color="transparent")
-        zoom_bar.grid(row=0, column=1, rowspan=2, padx=(8, 16), pady=10, sticky="e")
+        zoom_bar = ctk.CTkFrame(title_bar, fg_color="transparent")
+        zoom_bar.grid(row=0, column=1, padx=(0, 16), pady=6, sticky="e")
 
         self.zoom_out_btn = ctk.CTkButton(
-            zoom_bar,
-            text="-",
-            width=34,
-            command=self._zoom_out,
-            font=("Segoe UI", 13, "bold"),
+            zoom_bar, text="\u2212", width=28, height=26, corner_radius=6,
+            command=self._zoom_out, font=("Segoe UI", 13, "bold"),
+            fg_color="#334155", hover_color="#475569",
         )
-        self.zoom_out_btn.grid(row=0, column=0, padx=(0, 4))
+        self.zoom_out_btn.grid(row=0, column=0, padx=(0, 3))
 
         self.zoom_label = ctk.CTkLabel(
-            zoom_bar, text="100%", width=58, anchor="center", font=("Segoe UI", 11)
+            zoom_bar, text="100%", width=48, anchor="center",
+            font=("Segoe UI", 10), text_color=self.TEXT_SEC,
         )
         self.zoom_label.grid(row=0, column=1, padx=2)
 
         self.zoom_in_btn = ctk.CTkButton(
-            zoom_bar,
-            text="+",
-            width=34,
-            command=self._zoom_in,
-            font=("Segoe UI", 13, "bold"),
+            zoom_bar, text="+", width=28, height=26, corner_radius=6,
+            command=self._zoom_in, font=("Segoe UI", 13, "bold"),
+            fg_color="#334155", hover_color="#475569",
         )
-        self.zoom_in_btn.grid(row=0, column=2, padx=(4, 0))
+        self.zoom_in_btn.grid(row=0, column=2, padx=(3, 0))
 
-        # Connection card
-        conn = ctk.CTkFrame(self.page, corner_radius=12)
-        conn.grid(row=1, column=0, padx=16, pady=6, sticky="ew")
+        self.state_banner = ctk.CTkFrame(
+            top, corner_radius=0, fg_color=self.BANNER_OFF_BG, height=88,
+        )
+        self.state_banner.grid(row=1, column=0, sticky="ew")
+        self.state_banner.grid_columnconfigure(0, weight=1)
+        self.state_banner.grid_propagate(False)
+
+        self.state_label = ctk.CTkLabel(
+            self.state_banner, text="DISCONNECTED",
+            font=("Segoe UI", 26, "bold"), text_color=self.TEXT_MUTED,
+        )
+        self.state_label.grid(row=0, column=0, pady=(14, 0))
+
+        self.state_detail = ctk.CTkLabel(
+            self.state_banner, text="Select a COM port and connect",
+            font=("Segoe UI", 12), text_color=self.TEXT_SEC,
+        )
+        self.state_detail.grid(row=1, column=0, pady=(0, 2))
+
+        self.source_label = ctk.CTkLabel(
+            self.state_banner, text="",
+            font=("Segoe UI", 10), text_color=self.TEXT_MUTED,
+        )
+        self.source_label.grid(row=2, column=0, pady=(0, 8))
+
+        # ── Scrollable body ──
+        self.page = ctk.CTkScrollableFrame(
+            self, corner_radius=0, fg_color="transparent",
+        )
+        self.page.grid(row=1, column=0, sticky="nsew")
+        self.page.grid_columnconfigure(0, weight=1)
+        self.page.grid_rowconfigure(2, weight=1)
+
+        pad_x = 20
+        gap = 8
+
+        # ── Connection card ──
+        conn = self._card(self.page)
+        conn.grid(row=0, column=0, padx=pad_x, pady=(12, gap), sticky="ew")
         conn.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(conn, text="COM Port", font=("Segoe UI", 13)).grid(
-            row=0, column=0, padx=(16, 8), pady=(12, 8), sticky="w"
+        self._section_label(conn, "Connection").grid(
+            row=0, column=0, columnspan=5, padx=16, pady=(10, 4), sticky="w",
         )
+
+        ctk.CTkLabel(
+            conn, text="COM Port", font=("Segoe UI", 12), text_color="#cbd5e1",
+        ).grid(row=1, column=0, padx=(16, 8), pady=(4, 8), sticky="w")
 
         self.port_var = ctk.StringVar(value="No ports found")
         self.port_menu = ctk.CTkOptionMenu(
-            conn,
-            variable=self.port_var,
-            values=["No ports found"],
-            command=self._on_port_selected,
-            width=150,
-            font=("Segoe UI", 12),
+            conn, variable=self.port_var, values=["No ports found"],
+            command=self._on_port_selected, width=145,
+            font=("Segoe UI", 12), corner_radius=8,
+            fg_color="#334155", button_color="#475569", button_hover_color="#64748b",
         )
-        self.port_menu.grid(row=0, column=1, padx=4, pady=(12, 8), sticky="w")
+        self.port_menu.grid(row=1, column=1, padx=4, pady=(4, 8), sticky="w")
+
+        btn_r = 8
 
         self.refresh_btn = ctk.CTkButton(
-            conn,
-            text="Refresh",
-            width=90,
-            command=self._refresh_ports,
-            fg_color="#4E4E4E",
-            hover_color="#5A5A5A",
-            font=("Segoe UI", 12),
+            conn, text="Refresh", width=85, corner_radius=btn_r,
+            command=self._refresh_ports, font=("Segoe UI", 12),
+            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
         )
-        self.refresh_btn.grid(row=0, column=2, padx=4, pady=(12, 8))
+        self.refresh_btn.grid(row=1, column=2, padx=3, pady=(4, 8))
 
         self.detect_btn = ctk.CTkButton(
-            conn,
-            text="Detect Arduino",
-            width=130,
-            command=self._detect_arduino_port,
-            fg_color="#3949AB",
-            hover_color="#3F51B5",
-            font=("Segoe UI", 12),
+            conn, text="Detect Arduino", width=125, corner_radius=btn_r,
+            command=self._detect_arduino_port, font=("Segoe UI", 12),
+            fg_color="#312e81", hover_color="#3730a3", text_color="#c7d2fe",
         )
-        self.detect_btn.grid(row=0, column=3, padx=4, pady=(12, 8))
+        self.detect_btn.grid(row=1, column=3, padx=3, pady=(4, 8))
 
         self.connect_btn = ctk.CTkButton(
-            conn,
-            text="Connect",
-            width=115,
-            command=self._toggle_connection,
-            fg_color="#2E7D32",
-            hover_color="#388E3C",
-            font=("Segoe UI", 12, "bold"),
+            conn, text="Connect", width=110, corner_radius=btn_r,
+            command=self._toggle_connection, font=("Segoe UI", 12, "bold"),
+            fg_color="#166534", hover_color="#15803d", text_color="#bbf7d0",
         )
-        self.connect_btn.grid(row=0, column=4, padx=(4, 16), pady=(12, 8))
+        self.connect_btn.grid(row=1, column=4, padx=(3, 16), pady=(4, 8))
 
         self.port_info_label = ctk.CTkLabel(
-            conn,
-            text="Select a COM port to view USB details.",
-            font=("Segoe UI", 11),
-            text_color="#A0A0A0",
-            anchor="w",
+            conn, text="Select a COM port to view USB details.",
+            font=("Segoe UI", 10), text_color=self.TEXT_MUTED, anchor="w",
         )
         self.port_info_label.grid(
-            row=1, column=0, columnspan=5, padx=16, pady=(0, 4), sticky="ew"
+            row=2, column=0, columnspan=5, padx=16, pady=(0, 2), sticky="ew",
         )
 
         self.connected_port_label = ctk.CTkLabel(
-            conn,
-            text="Arduino COM: Not connected",
-            font=("Segoe UI", 11, "bold"),
-            text_color="#8F8F8F",
-            anchor="w",
+            conn, text="Not connected",
+            font=("Segoe UI", 10, "bold"), text_color=self.TEXT_MUTED, anchor="w",
         )
         self.connected_port_label.grid(
-            row=2, column=0, columnspan=5, padx=16, pady=(0, 12), sticky="ew"
+            row=3, column=0, columnspan=5, padx=16, pady=(0, 10), sticky="ew",
         )
 
-        # Variant and sync card
-        var_frame = ctk.CTkFrame(self.page, corner_radius=12)
-        var_frame.grid(row=2, column=0, padx=16, pady=6, sticky="ew")
-        var_frame.grid_columnconfigure(2, weight=1)
+        # ── Valve Control card (variant + buttons combined) ──
+        ctrl = self._card(self.page)
+        ctrl.grid(row=1, column=0, padx=pad_x, pady=gap, sticky="ew")
+        ctrl.grid_columnconfigure((0, 1, 2), weight=1)
 
-        ctk.CTkLabel(var_frame, text="Valve Variant", font=("Segoe UI", 13)).grid(
-            row=0, column=0, padx=(16, 8), pady=12, sticky="w"
+        self._section_label(ctrl, "Valve Control").grid(
+            row=0, column=0, columnspan=3, padx=16, pady=(10, 6), sticky="w",
         )
+
+        var_row = ctk.CTkFrame(ctrl, fg_color="transparent")
+        var_row.grid(row=1, column=0, columnspan=3, padx=16, pady=(0, 6), sticky="ew")
+        var_row.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            var_row, text="Variant", font=("Segoe UI", 12), text_color="#cbd5e1",
+        ).grid(row=0, column=0, padx=(0, 8), sticky="w")
 
         self.variant_var = ctk.StringVar(value=list(self.VARIANTS.keys())[0])
         self.variant_menu = ctk.CTkOptionMenu(
-            var_frame,
-            variable=self.variant_var,
+            var_row, variable=self.variant_var,
             values=list(self.VARIANTS.keys()),
-            command=self._on_variant_change,
-            width=230,
+            command=self._on_variant_change, width=220, corner_radius=8,
             font=("Segoe UI", 12),
+            fg_color="#334155", button_color="#475569", button_hover_color="#64748b",
         )
-        self.variant_menu.grid(row=0, column=1, padx=4, pady=12, sticky="w")
+        self.variant_menu.grid(row=0, column=1, padx=4, sticky="w")
 
         self.variant_hint = ctk.CTkLabel(
-            var_frame,
-            text=self.VARIANTS[self.variant_var.get()]["hint"],
-            font=("Segoe UI", 11, "italic"),
-            text_color="#AAAAAA",
+            var_row, text=self.VARIANTS[self.variant_var.get()]["hint"],
+            font=("Segoe UI", 10, "italic"), text_color=self.TEXT_MUTED,
         )
-        self.variant_hint.grid(row=0, column=2, padx=(12, 8), pady=12, sticky="w")
+        self.variant_hint.grid(row=0, column=2, padx=(12, 4), sticky="w")
 
         self.read_state_btn = ctk.CTkButton(
-            var_frame,
-            text="Read State",
-            width=105,
-            command=self._query_state,
-            fg_color="#455A64",
-            hover_color="#546E7A",
-            font=("Segoe UI", 12),
+            var_row, text="Read State", width=95, corner_radius=btn_r,
+            command=self._query_state, font=("Segoe UI", 12),
+            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
         )
-        self.read_state_btn.grid(row=0, column=3, padx=(4, 16), pady=12)
+        self.read_state_btn.grid(row=0, column=3)
 
-        # Manual controls card
-        ctrl = ctk.CTkFrame(self.page, corner_radius=12)
-        ctrl.grid(row=3, column=0, padx=16, pady=6, sticky="ew")
-        ctrl.grid_columnconfigure((0, 1, 2), weight=1)
-
-        btn_h = 70
+        btn_h = 66
         btn_font = ("Segoe UI", 13, "bold")
 
         self.btn_a = ctk.CTkButton(
-            ctrl,
-            text="POSITION A\nSolenoid A",
-            height=btn_h,
-            fg_color="#1565C0",
-            hover_color="#1976D2",
-            font=btn_font,
+            ctrl, text="POSITION A\nSolenoid A", height=btn_h, corner_radius=10,
+            fg_color="#1d4ed8", hover_color="#2563eb", font=btn_font,
             command=lambda: self._send("A"),
         )
-        self.btn_a.grid(row=0, column=0, padx=(16, 6), pady=16, sticky="ew")
+        self.btn_a.grid(row=2, column=0, padx=(16, 5), pady=(6, 16), sticky="ew")
 
         variant_info = self.VARIANTS[self.variant_var.get()]
         self.btn_c = ctk.CTkButton(
-            ctrl,
-            text=variant_info["btn"],
-            height=btn_h,
-            fg_color="#2E7D32",
-            hover_color="#388E3C",
-            font=btn_font,
+            ctrl, text=variant_info["btn"], height=btn_h, corner_radius=10,
+            fg_color="#166534", hover_color="#15803d", font=btn_font,
             command=lambda: self._send("C"),
         )
-        self.btn_c.grid(row=0, column=1, padx=6, pady=16, sticky="ew")
+        self.btn_c.grid(row=2, column=1, padx=5, pady=(6, 16), sticky="ew")
 
         self.btn_b = ctk.CTkButton(
-            ctrl,
-            text="POSITION B\nSolenoid B",
-            height=btn_h,
-            fg_color="#E65100",
-            hover_color="#F57C00",
-            font=btn_font,
+            ctrl, text="POSITION B\nSolenoid B", height=btn_h, corner_radius=10,
+            fg_color="#c2410c", hover_color="#ea580c", font=btn_font,
             command=lambda: self._send("B"),
         )
-        self.btn_b.grid(row=0, column=2, padx=(6, 16), pady=16, sticky="ew")
+        self.btn_b.grid(row=2, column=2, padx=(5, 16), pady=(6, 16), sticky="ew")
 
-        # Active indicator card
-        self.indicator_frame = ctk.CTkFrame(self.page, corner_radius=12)
-        self.indicator_frame.grid(row=4, column=0, padx=16, pady=6, sticky="ew")
-        self.indicator_frame.grid_columnconfigure(0, weight=1)
-
-        self.state_label = ctk.CTkLabel(
-            self.indicator_frame,
-            text="DISCONNECTED",
-            font=("Segoe UI", 24, "bold"),
-            text_color="#777777",
-        )
-        self.state_label.grid(row=0, column=0, pady=(16, 4))
-
-        self.state_detail = ctk.CTkLabel(
-            self.indicator_frame,
-            text="Select a COM port and connect",
-            font=("Segoe UI", 12),
-            text_color="#999999",
-        )
-        self.state_detail.grid(row=1, column=0, pady=(0, 4))
-
-        self.source_label = ctk.CTkLabel(
-            self.indicator_frame,
-            text="",
-            font=("Segoe UI", 10),
-            text_color="#777777",
-        )
-        self.source_label.grid(row=2, column=0, pady=(0, 12))
-
-        # Sequence card
-        seq = ctk.CTkFrame(self.page, corner_radius=12)
-        seq.grid(row=5, column=0, padx=16, pady=6, sticky="nsew")
+        # ── Sequence Builder card ──
+        seq = self._card(self.page)
+        seq.grid(row=2, column=0, padx=pad_x, pady=(gap, 16), sticky="nsew")
         seq.grid_columnconfigure(0, weight=1)
         seq.grid_rowconfigure(2, weight=1)
 
-        ctk.CTkLabel(seq, text="Sequence Builder", font=("Segoe UI", 16, "bold")).grid(
-            row=0, column=0, padx=16, pady=(12, 4), sticky="w"
+        self._section_label(seq, "Sequence Builder").grid(
+            row=0, column=0, padx=16, pady=(10, 6), sticky="w",
         )
 
         editor = ctk.CTkFrame(seq, fg_color="transparent")
-        editor.grid(row=1, column=0, padx=12, pady=(0, 6), sticky="ew")
-        editor.grid_columnconfigure(10, weight=1)
+        editor.grid(row=1, column=0, padx=12, pady=(0, 4), sticky="ew")
 
-        ctk.CTkLabel(editor, text="Step", font=("Segoe UI", 12)).grid(
-            row=0, column=0, padx=(4, 6), pady=6
-        )
+        ctk.CTkLabel(
+            editor, text="State", font=("Segoe UI", 12), text_color="#cbd5e1",
+        ).grid(row=0, column=0, padx=(4, 6), pady=5)
+
         self.seq_state_var = ctk.StringVar(value="A")
         self.seq_state_menu = ctk.CTkOptionMenu(
-            editor,
-            variable=self.seq_state_var,
-            values=["A", "B", "C"],
-            width=75,
-            font=("Segoe UI", 12),
+            editor, variable=self.seq_state_var, values=["A", "B", "C"],
+            width=70, corner_radius=8, font=("Segoe UI", 12),
+            fg_color="#334155", button_color="#475569", button_hover_color="#64748b",
         )
-        self.seq_state_menu.grid(row=0, column=1, padx=4, pady=6)
+        self.seq_state_menu.grid(row=0, column=1, padx=3, pady=5)
 
-        ctk.CTkLabel(editor, text="Duration (s)", font=("Segoe UI", 12)).grid(
-            row=0, column=2, padx=(10, 6), pady=6
-        )
+        ctk.CTkLabel(
+            editor, text="Duration (s)", font=("Segoe UI", 12),
+            text_color="#cbd5e1",
+        ).grid(row=0, column=2, padx=(10, 6), pady=5)
+
         self.seq_duration_var = ctk.StringVar(value="1.0")
         self.seq_duration_entry = ctk.CTkEntry(
-            editor, textvariable=self.seq_duration_var, width=100, font=("Segoe UI", 12)
+            editor, textvariable=self.seq_duration_var, width=75, corner_radius=8,
+            font=("Segoe UI", 12), fg_color="#0f172a", border_color="#334155",
         )
-        self.seq_duration_entry.grid(row=0, column=3, padx=4, pady=6)
+        self.seq_duration_entry.grid(row=0, column=3, padx=3, pady=5)
 
-        self.seq_add_btn = ctk.CTkButton(
-            editor,
-            text="Add Step",
-            width=95,
-            command=self._add_sequence_step,
-            fg_color="#00796B",
-            hover_color="#00897B",
-            font=("Segoe UI", 12),
-        )
-        self.seq_add_btn.grid(row=0, column=4, padx=4, pady=6)
+        sb = lambda **k: ctk.CTkButton(editor, corner_radius=btn_r, font=("Segoe UI", 11), **k)
 
-        self.seq_update_btn = ctk.CTkButton(
-            editor,
-            text="Apply to Selected",
-            width=130,
-            command=self._update_selected_sequence_step,
-            fg_color="#546E7A",
-            hover_color="#607D8B",
-            font=("Segoe UI", 12),
+        self.seq_add_btn = sb(
+            text="+ Add", width=72, command=self._add_sequence_step,
+            fg_color="#0f766e", hover_color="#0d9488", text_color="#ccfbf1",
         )
-        self.seq_update_btn.grid(row=0, column=5, padx=4, pady=6)
+        self.seq_add_btn.grid(row=0, column=4, padx=3, pady=5)
 
-        self.seq_remove_btn = ctk.CTkButton(
-            editor,
-            text="Remove",
-            width=110,
-            command=self._remove_last_sequence_step,
-            fg_color="#6D4C41",
-            hover_color="#795548",
-            font=("Segoe UI", 12),
+        self.seq_edit_btn = sb(
+            text="Edit", width=62, command=self._edit_selected_step,
+            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
         )
-        self.seq_remove_btn.grid(row=0, column=6, padx=4, pady=6)
+        self.seq_edit_btn.grid(row=0, column=5, padx=3, pady=5)
 
-        self.seq_clear_btn = ctk.CTkButton(
-            editor,
-            text="Clear",
-            width=80,
-            command=self._clear_sequence_steps,
-            fg_color="#5D4037",
-            hover_color="#6D4C41",
-            font=("Segoe UI", 12),
+        self.seq_remove_btn = sb(
+            text="Remove", width=72, command=self._remove_sequence_step,
+            fg_color="#7f1d1d", hover_color="#991b1b", text_color="#fecaca",
         )
-        self.seq_clear_btn.grid(row=0, column=7, padx=4, pady=6)
+        self.seq_remove_btn.grid(row=0, column=6, padx=3, pady=5)
 
-        self.seq_demo_btn = ctk.CTkButton(
-            editor,
-            text="Load Demo",
-            width=105,
-            command=self._load_demo_sequence,
-            fg_color="#37474F",
-            hover_color="#455A64",
-            font=("Segoe UI", 12),
+        self.seq_clear_btn = sb(
+            text="Clear", width=62, command=self._clear_sequence_steps,
+            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
         )
-        self.seq_demo_btn.grid(row=0, column=8, padx=(4, 4), pady=6)
+        self.seq_clear_btn.grid(row=0, column=7, padx=3, pady=5)
 
-        self.seq_connect_btn = ctk.CTkButton(
-            editor,
-            text="Connect",
-            width=90,
-            command=self._arm_connect_selected,
-            fg_color="#2E7D32",
-            hover_color="#388E3C",
-            font=("Segoe UI", 12),
+        self.seq_demo_btn = sb(
+            text="Demo", width=62, command=self._load_demo_sequence,
+            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
         )
-        self.seq_connect_btn.grid(row=0, column=9, padx=4, pady=6)
+        self.seq_demo_btn.grid(row=0, column=8, padx=3, pady=5)
 
-        self.seq_disconnect_btn = ctk.CTkButton(
-            editor,
-            text="Disconnect",
-            width=100,
-            command=self._disconnect_selected_sequence_step,
-            fg_color="#6A1B9A",
-            hover_color="#7B1FA2",
-            font=("Segoe UI", 12),
+        # Sequence table
+        table_frame = ctk.CTkFrame(
+            seq, corner_radius=8, fg_color="#0f172a",
+            border_width=1, border_color="#1e293b",
         )
-        self.seq_disconnect_btn.grid(row=0, column=10, padx=(4, 6), pady=6, sticky="w")
+        table_frame.grid(row=2, column=0, padx=16, pady=4, sticky="nsew")
+        table_frame.grid_columnconfigure(0, weight=1)
+        table_frame.grid_rowconfigure(0, weight=1)
 
-        canvas_wrap = ctk.CTkFrame(seq, corner_radius=8)
-        canvas_wrap.grid(row=2, column=0, padx=16, pady=6, sticky="nsew")
-        canvas_wrap.grid_columnconfigure(0, weight=1)
-        canvas_wrap.grid_rowconfigure(0, weight=1)
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Seq.Treeview",
+            background="#0f172a", foreground="#e2e8f0", fieldbackground="#0f172a",
+            borderwidth=0, font=("Segoe UI", 11), rowheight=32,
+        )
+        style.configure(
+            "Seq.Treeview.Heading",
+            background="#1e293b", foreground="#94a3b8",
+            font=("Segoe UI", 10, "bold"), borderwidth=0, relief="flat",
+        )
+        style.map(
+            "Seq.Treeview",
+            background=[("selected", "#2563eb")],
+            foreground=[("selected", "#ffffff")],
+        )
 
-        self.sequence_canvas = tk.Canvas(
-            canvas_wrap,
-            height=240,
-            bg="#12171F",
-            highlightthickness=1,
-            highlightbackground="#2A2F36",
-            bd=0,
+        self.seq_table = ttk.Treeview(
+            table_frame, columns=("num", "state", "duration"),
+            show="headings", selectmode="browse",
+            style="Seq.Treeview", height=8,
         )
-        self.sequence_canvas.grid(row=0, column=0, sticky="nsew")
-        self.sequence_canvas.configure(scrollregion=(0, 0, 1400, 900))
+        self.seq_table.heading("num", text="#")
+        self.seq_table.heading("state", text="State")
+        self.seq_table.heading("duration", text="Duration (s)")
+        self.seq_table.column("num", width=50, anchor="center", stretch=False)
+        self.seq_table.column("state", width=150, anchor="center")
+        self.seq_table.column("duration", width=150, anchor="center")
+        self.seq_table.grid(row=0, column=0, sticky="nsew", padx=(1, 0), pady=1)
 
-        self.sequence_canvas_hbar = ctk.CTkScrollbar(
-            canvas_wrap, orientation="horizontal", command=self.sequence_canvas.xview
+        scrollbar = ttk.Scrollbar(
+            table_frame, orient="vertical", command=self.seq_table.yview,
         )
-        self.sequence_canvas_hbar.grid(row=1, column=0, sticky="ew")
-        self.sequence_canvas_vbar = ctk.CTkScrollbar(
-            canvas_wrap, orientation="vertical", command=self.sequence_canvas.yview
-        )
-        self.sequence_canvas_vbar.grid(row=0, column=1, sticky="ns")
-        self.sequence_canvas.configure(
-            xscrollcommand=self.sequence_canvas_hbar.set,
-            yscrollcommand=self.sequence_canvas_vbar.set,
-        )
-        self.sequence_canvas.bind("<ButtonPress-1>", self._on_sequence_canvas_press)
-        self.sequence_canvas.bind("<B1-Motion>", self._on_sequence_canvas_drag)
-        self.sequence_canvas.bind("<ButtonRelease-1>", self._on_sequence_canvas_release)
-        self.sequence_canvas.bind("<MouseWheel>", self._on_sequence_mousewheel)
-        self.sequence_canvas.bind(
-            "<Button-4>", lambda _event: self._scroll_sequence_box(-1)
-        )
-        self.sequence_canvas.bind(
-            "<Button-5>", lambda _event: self._scroll_sequence_box(1)
-        )
-        self.sequence_canvas.bind("<Configure>", self._on_sequence_canvas_configure)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.seq_table.configure(yscrollcommand=scrollbar.set)
+        self.seq_table.bind("<<TreeviewSelect>>", self._on_table_select)
 
-        run_bar = ctk.CTkFrame(seq, fg_color="transparent")
-        run_bar.grid(row=3, column=0, padx=12, pady=(4, 0), sticky="ew")
-        run_bar.grid_columnconfigure(4, weight=1)
+        self.seq_table.tag_configure("state_A", background="#172554")
+        self.seq_table.tag_configure("state_B", background="#431407")
+        self.seq_table.tag_configure("state_C", background="#14532d")
+
+        # Move + run bar
+        action_bar = ctk.CTkFrame(seq, fg_color="transparent")
+        action_bar.grid(row=3, column=0, padx=12, pady=(4, 2), sticky="ew")
+        action_bar.grid_columnconfigure(2, weight=1)
+
+        self.seq_up_btn = ctk.CTkButton(
+            action_bar, text="\u25B2  Up", width=70, corner_radius=btn_r,
+            command=self._move_step_up, font=("Segoe UI", 11),
+            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
+        )
+        self.seq_up_btn.grid(row=0, column=0, padx=(4, 3), pady=4)
+
+        self.seq_down_btn = ctk.CTkButton(
+            action_bar, text="\u25BC  Down", width=78, corner_radius=btn_r,
+            command=self._move_step_down, font=("Segoe UI", 11),
+            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
+        )
+        self.seq_down_btn.grid(row=0, column=1, padx=3, pady=4)
+
+        spacer = ctk.CTkLabel(action_bar, text="")
+        spacer.grid(row=0, column=2)
 
         self.seq_run_once_btn = ctk.CTkButton(
-            run_bar,
-            text="Run Once",
-            width=100,
+            action_bar, text="\u25B6  Run Once", width=105, corner_radius=btn_r,
             command=lambda: self._start_sequence(loop_mode=False),
-            fg_color="#1976D2",
-            hover_color="#1E88E5",
             font=("Segoe UI", 12, "bold"),
+            fg_color="#1d4ed8", hover_color="#2563eb",
         )
-        self.seq_run_once_btn.grid(row=0, column=0, padx=4, pady=6)
+        self.seq_run_once_btn.grid(row=0, column=3, padx=3, pady=4)
 
         self.seq_run_loop_btn = ctk.CTkButton(
-            run_bar,
-            text="Run Loop",
-            width=100,
+            action_bar, text="\u21BB  Loop", width=88, corner_radius=btn_r,
             command=lambda: self._start_sequence(loop_mode=True),
-            fg_color="#5E35B1",
-            hover_color="#673AB7",
             font=("Segoe UI", 12, "bold"),
+            fg_color="#6d28d9", hover_color="#7c3aed",
         )
-        self.seq_run_loop_btn.grid(row=0, column=1, padx=4, pady=6)
+        self.seq_run_loop_btn.grid(row=0, column=4, padx=3, pady=4)
 
         self.seq_stop_btn = ctk.CTkButton(
-            run_bar,
-            text="Stop",
-            width=90,
-            command=self._stop_sequence,
-            fg_color="#C62828",
-            hover_color="#D32F2F",
-            font=("Segoe UI", 12, "bold"),
+            action_bar, text="\u25A0  Stop", width=80, corner_radius=btn_r,
+            command=self._stop_sequence, font=("Segoe UI", 12, "bold"),
+            fg_color="#991b1b", hover_color="#b91c1c",
         )
-        self.seq_stop_btn.grid(row=0, column=2, padx=4, pady=6)
+        self.seq_stop_btn.grid(row=0, column=5, padx=(3, 4), pady=4)
+
+        bottom_bar = ctk.CTkFrame(seq, fg_color="transparent")
+        bottom_bar.grid(row=4, column=0, padx=16, pady=(0, 10), sticky="ew")
+        bottom_bar.grid_columnconfigure(1, weight=1)
 
         self.return_center_var = ctk.BooleanVar(value=True)
         self.return_center_chk = ctk.CTkCheckBox(
-            run_bar,
-            text="Return to Center after sequence",
-            variable=self.return_center_var,
-            font=("Segoe UI", 11),
+            bottom_bar, text="Return to Center after sequence",
+            variable=self.return_center_var, font=("Segoe UI", 11),
+            checkbox_width=18, checkbox_height=18, corner_radius=4,
         )
-        self.return_center_chk.grid(row=0, column=3, padx=(10, 4), pady=6, sticky="w")
+        self.return_center_chk.grid(row=0, column=0, pady=2, sticky="w")
 
         self.sequence_status = ctk.CTkLabel(
-            seq,
-            text="Sequence idle",
-            font=("Segoe UI", 11),
-            text_color="#A0A0A0",
-            anchor="w",
+            bottom_bar, text="Sequence idle",
+            font=("Segoe UI", 10), text_color=self.TEXT_MUTED, anchor="e",
         )
-        self.sequence_status.grid(row=4, column=0, padx=16, pady=(0, 12), sticky="ew")
+        self.sequence_status.grid(row=0, column=1, padx=(12, 0), pady=2, sticky="e")
 
-        # Status bar
+        # ── Status bar (fixed at bottom) ──
         self.status_bar = ctk.CTkLabel(
-            self,
-            text="Ready  |  Ctrl + / - to zoom, Ctrl+0 reset",
-            font=("Segoe UI", 10),
-            text_color="#777777",
-            anchor="w",
+            self, text="Ready  \u2502  Ctrl +/\u2212 zoom, Ctrl+0 reset",
+            font=("Segoe UI", 10), text_color=self.TEXT_MUTED, anchor="w",
+            height=24,
         )
-        self.status_bar.grid(row=1, column=0, padx=20, pady=(4, 10), sticky="ew")
+        self.status_bar.grid(row=2, column=0, padx=20, pady=(2, 8), sticky="ew")
 
         self._refresh_ports()
-        self._refresh_sequence_box()
+        self._refresh_sequence_table()
 
     # Polling loops
     def _poll_results(self):
@@ -857,10 +829,10 @@ class ValveApp(ctk.CTk):
             hwid = hwid[:67] + "..."
         score = self._score_port(info)
         likely_text = "Likely Arduino" if score > 0 else "Unknown USB serial device"
-        likely_color = "#8BC34A" if score > 0 else "#A0A0A0"
+        likely_color = "#4ade80" if score > 0 else self.TEXT_MUTED
 
         self.port_info_label.configure(
-            text=f"{device} | {description} | {manufacturer} | {likely_text} | {hwid}",
+            text=f"{device}  \u2502  {description}  \u2502  {manufacturer}  \u2502  {likely_text}",
             text_color=likely_color,
         )
 
@@ -885,13 +857,14 @@ class ValveApp(ctk.CTk):
                 probe_candidates = ranked
 
             for item in probe_candidates:
-                matched, response = ValveController.probe_port(item["device"])
+                matched, response, ser = ValveController.probe_port(item["device"])
                 if matched:
                     return {
                         "details": details,
                         "port": item["device"],
                         "mode": "handshake",
                         "response": response,
+                        "ser": ser,
                     }
 
             if ranked and self._score_port(ranked[0]) > 0:
@@ -913,6 +886,12 @@ class ValveApp(ctk.CTk):
                 self.status_bar.configure(text=f"Arduino detection failed: {err}")
                 return
 
+            self._close_probed_serial()
+            probed_ser = result.get("ser")
+            if probed_ser and probed_ser.is_open:
+                self._probed_serial = probed_ser
+                self._probed_port = result.get("port")
+
             self._apply_port_details(result["details"])
             port = result.get("port")
             mode = result.get("mode")
@@ -921,24 +900,24 @@ class ValveApp(ctk.CTk):
                 self._update_port_details()
                 if mode == "handshake":
                     self.connected_port_label.configure(
-                        text=f"Arduino COM candidate: {port} (handshake successful)",
-                        text_color="#7CD67C",
+                        text=f"\u2714  Arduino detected on {port} (handshake verified)",
+                        text_color="#4ade80",
                     )
                     self.status_bar.configure(
                         text=f"Arduino detected on {port} via serial handshake"
                     )
                 else:
                     self.connected_port_label.configure(
-                        text=f"Arduino COM candidate: {port} (USB signature match)",
-                        text_color="#C8D66B",
+                        text=f"\u2248  Likely Arduino on {port} (USB signature match)",
+                        text_color="#fbbf24",
                     )
                     self.status_bar.configure(
                         text=f"Likely Arduino port: {port} (based on USB details)"
                     )
             else:
                 self.connected_port_label.configure(
-                    text="Arduino COM: Not detected",
-                    text_color="#8F8F8F",
+                    text="No Arduino detected",
+                    text_color=self.TEXT_MUTED,
                 )
                 self.status_bar.configure(
                     text="No Arduino response detected. Verify sketch and USB cable."
@@ -947,6 +926,16 @@ class ValveApp(ctk.CTk):
         self._run_async(work, done)
 
     # Connection handlers
+    def _close_probed_serial(self):
+        if self._probed_serial:
+            try:
+                if self._probed_serial.is_open:
+                    self._probed_serial.close()
+            except Exception:
+                pass
+            self._probed_serial = None
+            self._probed_port = None
+
     def _toggle_connection(self):
         if self.busy or self.detecting:
             return
@@ -961,6 +950,15 @@ class ValveApp(ctk.CTk):
             messagebox.showwarning("No Port", "Select a COM port first.")
             return
 
+        probed_ser = None
+        if (self._probed_serial and self._probed_serial.is_open
+                and self._probed_port == port):
+            probed_ser = self._probed_serial
+            self._probed_serial = None
+            self._probed_port = None
+        else:
+            self._close_probed_serial()
+
         self.busy = True
         self.connect_btn.configure(text="Connecting...", state="disabled")
         self.status_bar.configure(text=f"Connecting to {port}...")
@@ -968,7 +966,7 @@ class ValveApp(ctk.CTk):
         self._set_sequence_controls()
 
         def work():
-            self.controller.connect(port)
+            self.controller.connect(port, existing_ser=probed_ser)
             return self.controller.send_command("?")
 
         def done(result, err):
@@ -981,8 +979,8 @@ class ValveApp(ctk.CTk):
                         pass
                 self._update_controls(connected=False)
                 self.connected_port_label.configure(
-                    text="Arduino COM: Not connected",
-                    text_color="#8F8F8F",
+                    text="Not connected",
+                    text_color=self.TEXT_MUTED,
                 )
                 self.status_bar.configure(text=f"Connection failed: {err}")
                 messagebox.showerror("Connection Failed", str(err))
@@ -997,8 +995,8 @@ class ValveApp(ctk.CTk):
             self.current_state = state
             self._show_state(state)
             self.connected_port_label.configure(
-                text=f"Arduino COM: Connected on {port}",
-                text_color="#7CD67C",
+                text=f"\u25CF  Connected on {port}",
+                text_color="#4ade80",
             )
             self.status_bar.configure(text=f"Connected on {port}")
 
@@ -1026,8 +1024,8 @@ class ValveApp(ctk.CTk):
             self._update_controls(connected=False)
             self._show_state(None)
             self.connected_port_label.configure(
-                text="Arduino COM: Not connected",
-                text_color="#8F8F8F",
+                text="Not connected",
+                text_color=self.TEXT_MUTED,
             )
             self.sequence_status.configure(text="Sequence idle")
             self.status_bar.configure(text="Disconnected")
@@ -1119,554 +1117,146 @@ class ValveApp(ctk.CTk):
             return None
         return duration
 
-    def _get_sequence_node_color(self, state):
-        return {"A": "#1565C0", "B": "#E65100", "C": "#2E7D32"}.get(state, "#455A64")
-
-    def _create_sequence_node(self, state, duration, x=None, y=None):
-        node_id = self.next_sequence_node_id
-        self.next_sequence_node_id += 1
-
-        index = len(self.sequence_nodes)
-        if x is None:
-            x = 70 + (index % 4) * 235
-        if y is None:
-            y = 60 + (index // 4) * 115
-
-        self.sequence_nodes[node_id] = {
-            "state": state,
-            "duration": duration,
-            "x": float(x),
-            "y": float(y),
-            "width": 180.0,
-            "height": 72.0,
-            "items": [],
-        }
-        self._render_sequence_node(node_id)
-        self._normalize_sequence_canvas_scrollregion()
-        return node_id
-
-    def _render_sequence_node(self, node_id):
-        if node_id not in self.sequence_nodes:
-            return
-        node = self.sequence_nodes[node_id]
-        for item in node["items"]:
-            self.sequence_canvas.delete(item)
-
-        x = node["x"]
-        y = node["y"]
-        w = node["width"]
-        h = node["height"]
-        state = node["state"]
-        duration = node["duration"]
-        is_selected = self.selected_sequence_node == node_id
-        is_pending_source = self.pending_link_source == node_id
-        fill = self._get_sequence_node_color(state)
-        outline = (
-            "#DCE4FF"
-            if is_selected
-            else ("#9CCC65" if is_pending_source else "#2D3645")
-        )
-        width = 3 if is_selected or is_pending_source else 1
-        node_tag = f"seq_node_{node_id}"
-
-        rect = self.sequence_canvas.create_rectangle(
-            x,
-            y,
-            x + w,
-            y + h,
-            fill=fill,
-            outline=outline,
-            width=width,
-            tags=("sequence_node", node_tag),
-        )
-        title = self.sequence_canvas.create_text(
-            x + 12,
-            y + 22,
-            text=f"State {state}",
-            fill="#FFFFFF",
-            anchor="w",
-            font=("Segoe UI", 11, "bold"),
-            tags=("sequence_node", node_tag),
-        )
-        detail = self.sequence_canvas.create_text(
-            x + 12,
-            y + 49,
-            text=f"Hold {duration:.2f}s",
-            fill="#E6E6E6",
-            anchor="w",
-            font=("Segoe UI", 10),
-            tags=("sequence_node", node_tag),
-        )
-        in_dot = self.sequence_canvas.create_oval(
-            x - 6,
-            y + h / 2 - 6,
-            x + 6,
-            y + h / 2 + 6,
-            fill="#CFD8DC",
-            outline="",
-            tags=("sequence_node", node_tag),
-        )
-        out_dot = self.sequence_canvas.create_oval(
-            x + w - 6,
-            y + h / 2 - 6,
-            x + w + 6,
-            y + h / 2 + 6,
-            fill="#CFD8DC",
-            outline="",
-            tags=("sequence_node", node_tag),
-        )
-        node["items"] = [rect, title, detail, in_dot, out_dot]
-        self.sequence_canvas.tag_raise("sequence_node")
-
-    def _node_id_from_item(self, item_id):
-        for tag in self.sequence_canvas.gettags(item_id):
-            if tag.startswith("seq_node_"):
-                try:
-                    return int(tag.split("_")[-1])
-                except ValueError:
-                    return None
-        return None
-
-    def _node_id_from_canvas_event(self, event):
-        current = self.sequence_canvas.find_withtag("current")
-        if current:
-            node_id = self._node_id_from_item(current[0])
-            if node_id in self.sequence_nodes:
-                return node_id
-
-        x = self.sequence_canvas.canvasx(event.x)
-        y = self.sequence_canvas.canvasy(event.y)
-        for node_id, node in self.sequence_nodes.items():
-            if (
-                node["x"] <= x <= node["x"] + node["width"]
-                and node["y"] <= y <= node["y"] + node["height"]
-            ):
-                return node_id
-        return None
-
-    def _select_sequence_node(self, node_id):
-        self.selected_sequence_node = (
-            node_id if node_id in self.sequence_nodes else None
-        )
-        if self.selected_sequence_node:
-            node = self.sequence_nodes[self.selected_sequence_node]
-            self.seq_state_var.set(node["state"])
-            self.seq_duration_var.set(f"{node['duration']:.2f}")
-        for existing_id in list(self.sequence_nodes.keys()):
-            self._render_sequence_node(existing_id)
-        self._redraw_sequence_links()
-
     def _add_sequence_step(self):
         if self.sequence_running:
             return
-
         state = self.seq_state_var.get()
         duration = self._parse_sequence_duration()
         if duration is None:
             return
-
-        node_id = self._create_sequence_node(state, duration)
-        prev = self.last_added_sequence_node
-        self.last_added_sequence_node = node_id
-        if prev and prev in self.sequence_nodes and prev != node_id:
-            self._connect_sequence_nodes(prev, node_id, quiet=True)
-        self._select_sequence_node(node_id)
-        self._refresh_sequence_box(keep_message=True)
+        self.sequence_steps.append({"state": state, "duration": duration})
+        self._refresh_sequence_table()
+        items = self.seq_table.get_children()
+        if items:
+            self.seq_table.selection_set(items[-1])
+            self.seq_table.see(items[-1])
         self._set_sequence_controls()
         self.sequence_status.configure(
-            text=f"Added block {len(self.sequence_nodes)}: {state} for {duration:.2f}s"
+            text=f"Added step {len(self.sequence_steps)}: {state} for {duration:.2f}s"
         )
 
-    def _update_selected_sequence_step(self):
+    def _edit_selected_step(self):
         if self.sequence_running:
             return
-        node_id = self.selected_sequence_node
-        if not node_id or node_id not in self.sequence_nodes:
-            messagebox.showinfo("No Selection", "Select a block to update first.")
+        sel = self.seq_table.selection()
+        if not sel:
+            messagebox.showinfo("No Selection", "Select a step to edit first.")
             return
-
+        idx = self.seq_table.index(sel[0])
         duration = self._parse_sequence_duration()
         if duration is None:
             return
-
         state = self.seq_state_var.get()
-        node = self.sequence_nodes[node_id]
-        node["state"] = state
-        node["duration"] = duration
-        self._render_sequence_node(node_id)
-        self._redraw_sequence_links()
-        self._refresh_sequence_box(keep_message=True)
+        self.sequence_steps[idx] = {"state": state, "duration": duration}
+        self._refresh_sequence_table()
+        items = self.seq_table.get_children()
+        self.seq_table.selection_set(items[idx])
         self.sequence_status.configure(
-            text=f"Updated selected block to {state} for {duration:.2f}s"
+            text=f"Updated step {idx + 1} to {state} for {duration:.2f}s"
         )
 
-    def _remove_last_sequence_step(self):
-        if self.sequence_running or not self.sequence_nodes:
+    def _remove_sequence_step(self):
+        if self.sequence_running or not self.sequence_steps:
             return
-
-        target = self.selected_sequence_node
-        if not target:
-            target = self.last_added_sequence_node
-        if target not in self.sequence_nodes:
-            target = max(self.sequence_nodes.keys())
-
-        removed = dict(self.sequence_nodes[target])
-        self._delete_sequence_node(target)
-        self._refresh_sequence_box(keep_message=True)
+        sel = self.seq_table.selection()
+        if sel:
+            idx = self.seq_table.index(sel[0])
+        else:
+            idx = len(self.sequence_steps) - 1
+        removed = self.sequence_steps.pop(idx)
+        self._refresh_sequence_table()
+        items = self.seq_table.get_children()
+        if items:
+            new_idx = min(idx, len(items) - 1)
+            self.seq_table.selection_set(items[new_idx])
         self._set_sequence_controls()
         self.sequence_status.configure(
-            text=f"Removed block: {removed['state']} for {removed['duration']:.2f}s"
+            text=f"Removed step: {removed['state']} for {removed['duration']:.2f}s"
         )
+
+    def _move_step_up(self):
+        if self.sequence_running:
+            return
+        sel = self.seq_table.selection()
+        if not sel:
+            return
+        idx = self.seq_table.index(sel[0])
+        if idx == 0:
+            return
+        self.sequence_steps[idx - 1], self.sequence_steps[idx] = (
+            self.sequence_steps[idx],
+            self.sequence_steps[idx - 1],
+        )
+        self._refresh_sequence_table()
+        items = self.seq_table.get_children()
+        self.seq_table.selection_set(items[idx - 1])
+        self.seq_table.see(items[idx - 1])
+
+    def _move_step_down(self):
+        if self.sequence_running:
+            return
+        sel = self.seq_table.selection()
+        if not sel:
+            return
+        idx = self.seq_table.index(sel[0])
+        if idx >= len(self.sequence_steps) - 1:
+            return
+        self.sequence_steps[idx], self.sequence_steps[idx + 1] = (
+            self.sequence_steps[idx + 1],
+            self.sequence_steps[idx],
+        )
+        self._refresh_sequence_table()
+        items = self.seq_table.get_children()
+        self.seq_table.selection_set(items[idx + 1])
+        self.seq_table.see(items[idx + 1])
 
     def _clear_sequence_steps(self):
-        if self.sequence_running or not self.sequence_nodes:
+        if self.sequence_running or not self.sequence_steps:
             return
-        self.sequence_canvas.delete("all")
-        self.sequence_nodes.clear()
-        self.sequence_links.clear()
-        self.sequence_incoming.clear()
-        self.selected_sequence_node = None
-        self.pending_link_source = None
-        self.last_added_sequence_node = None
         self.sequence_steps.clear()
-        self._refresh_sequence_box()
+        self._refresh_sequence_table()
         self._set_sequence_controls()
-        self.sequence_status.configure(
-            text="Sequence cleared. Add blocks, drag to move, then connect them."
-        )
+        self.sequence_status.configure(text="Sequence cleared")
 
     def _load_demo_sequence(self):
         if self.sequence_running:
             return
-
-        self.sequence_canvas.delete("all")
-        self.sequence_nodes.clear()
-        self.sequence_links.clear()
-        self.sequence_incoming.clear()
-        self.selected_sequence_node = None
-        self.pending_link_source = None
-        self.last_added_sequence_node = None
-
-        demo = [
-            ("C", 0.5),
-            ("A", 1.2),
-            ("C", 0.4),
-            ("B", 1.2),
-            ("C", 0.6),
-        ]
-        previous = None
-        for idx, (state, duration) in enumerate(demo):
-            x = 70 + idx * 220
-            y = 70 + (idx % 2) * 95
-            node_id = self._create_sequence_node(state, duration, x=x, y=y)
-            if previous:
-                self._connect_sequence_nodes(previous, node_id, quiet=True)
-            previous = node_id
-            self.last_added_sequence_node = node_id
-
-        self._select_sequence_node(previous)
-        self._refresh_sequence_box(keep_message=True)
-        self._set_sequence_controls()
-        self.sequence_status.configure(
-            text="Loaded demo blocks. Drag them around and reconnect if needed."
-        )
-
-    def _delete_sequence_node(self, node_id):
-        if node_id not in self.sequence_nodes:
-            return
-
-        old_target = self.sequence_links.pop(node_id, None)
-        if old_target in self.sequence_incoming:
-            self.sequence_incoming.pop(old_target, None)
-
-        old_source = self.sequence_incoming.pop(node_id, None)
-        if old_source is not None and self.sequence_links.get(old_source) == node_id:
-            self.sequence_links.pop(old_source, None)
-
-        for item in self.sequence_nodes[node_id]["items"]:
-            self.sequence_canvas.delete(item)
-        self.sequence_nodes.pop(node_id, None)
-
-        if self.selected_sequence_node == node_id:
-            self.selected_sequence_node = None
-        if self.pending_link_source == node_id:
-            self.pending_link_source = None
-        if self.last_added_sequence_node == node_id:
-            self.last_added_sequence_node = (
-                max(self.sequence_nodes.keys()) if self.sequence_nodes else None
-            )
-
-        self._redraw_sequence_links()
-        self._normalize_sequence_canvas_scrollregion()
-
-    def _path_exists(self, links, start, goal):
-        current = start
-        seen = set()
-        while current is not None and current not in seen:
-            if current == goal:
-                return True
-            seen.add(current)
-            current = links.get(current)
-        return False
-
-    def _connect_sequence_nodes(self, source_id, target_id, quiet=False):
-        if source_id not in self.sequence_nodes or target_id not in self.sequence_nodes:
-            return False
-        if source_id == target_id:
-            if not quiet:
-                self.status_bar.configure(text="Cannot connect a block to itself")
-            return False
-
-        candidate = dict(self.sequence_links)
-        candidate[source_id] = target_id
-        for src, dst in list(candidate.items()):
-            if src != source_id and dst == target_id:
-                candidate.pop(src, None)
-
-        if self._path_exists(candidate, target_id, source_id):
-            if not quiet:
-                self.status_bar.configure(
-                    text="Connection rejected: it would create a loop"
-                )
-            return False
-
-        self.sequence_links = candidate
-        self.sequence_incoming = {dst: src for src, dst in self.sequence_links.items()}
-        self.pending_link_source = None
-        self._redraw_sequence_links()
-        self._refresh_sequence_box(keep_message=True)
-        if not quiet:
-            self.sequence_status.configure(text="Blocks connected")
-        return True
-
-    def _arm_connect_selected(self):
-        if self.sequence_running:
-            return
-        node_id = self.selected_sequence_node
-        if not node_id or node_id not in self.sequence_nodes:
-            messagebox.showinfo("No Selection", "Select a source block first.")
-            return
-        self.pending_link_source = node_id
-        self._select_sequence_node(node_id)
-        self.sequence_status.configure(
-            text="Select target block to complete connection"
-        )
-
-    def _disconnect_selected_sequence_step(self):
-        if self.sequence_running:
-            return
-        node_id = self.selected_sequence_node
-        if not node_id or node_id not in self.sequence_nodes:
-            return
-
-        changed = False
-        out_target = self.sequence_links.pop(node_id, None)
-        if out_target is not None:
-            self.sequence_incoming.pop(out_target, None)
-            changed = True
-        in_source = self.sequence_incoming.pop(node_id, None)
-        if in_source is not None and self.sequence_links.get(in_source) == node_id:
-            self.sequence_links.pop(in_source, None)
-            changed = True
-
-        if changed:
-            self._redraw_sequence_links()
-            self._refresh_sequence_box(keep_message=True)
-            self.sequence_status.configure(text="Disconnected selected block")
-
-    def _ordered_sequence_node_ids(self):
-        if not self.sequence_nodes:
-            return []
-        if not self.sequence_links:
-            return None
-        if len(self.sequence_links) != len(self.sequence_nodes) - 1:
-            return None
-
-        incoming = {dst: src for src, dst in self.sequence_links.items()}
-        starts = [node_id for node_id in self.sequence_nodes if node_id not in incoming]
-        if len(starts) != 1:
-            return None
-
-        ordered = []
-        seen = set()
-        current = starts[0]
-        while current is not None:
-            if current in seen:
-                return None
-            seen.add(current)
-            ordered.append(current)
-            current = self.sequence_links.get(current)
-
-        if len(ordered) != len(self.sequence_nodes):
-            return None
-        return ordered
-
-    def _refresh_sequence_box(self, keep_message=False):
-        ordered_ids = self._ordered_sequence_node_ids()
-        mode = "connected"
-        if ordered_ids is None:
-            mode = "layout"
-            ordered_ids = sorted(
-                self.sequence_nodes.keys(),
-                key=lambda node_id: (
-                    self.sequence_nodes[node_id]["y"],
-                    self.sequence_nodes[node_id]["x"],
-                    node_id,
-                ),
-            )
-
         self.sequence_steps = [
-            {
-                "state": self.sequence_nodes[node_id]["state"],
-                "duration": self.sequence_nodes[node_id]["duration"],
-            }
-            for node_id in ordered_ids
+            {"state": "C", "duration": 0.5},
+            {"state": "A", "duration": 1.2},
+            {"state": "C", "duration": 0.4},
+            {"state": "B", "duration": 1.2},
+            {"state": "C", "duration": 0.6},
         ]
-        self.sequence_incoming = {
-            dst: src
-            for src, dst in self.sequence_links.items()
-            if src in self.sequence_nodes and dst in self.sequence_nodes
-        }
+        self._refresh_sequence_table()
+        self._set_sequence_controls()
+        self.sequence_status.configure(text="Loaded demo sequence (5 steps)")
 
-        self._redraw_sequence_links()
-        self._normalize_sequence_canvas_scrollregion()
-
-        self.sequence_canvas.delete("empty_hint")
-        if not self.sequence_nodes:
-            self.sequence_canvas.create_text(
-                70,
-                46,
-                text=(
-                    "Add blocks, drag them, and connect source -> target.\n"
-                    "If blocks are not fully connected, run order follows top-to-bottom layout."
-                ),
-                fill="#B0BEC5",
-                anchor="w",
-                font=("Segoe UI", 11),
-                tags=("empty_hint",),
+    def _refresh_sequence_table(self):
+        for item in self.seq_table.get_children():
+            self.seq_table.delete(item)
+        for i, step in enumerate(self.sequence_steps):
+            tag = f"state_{step['state']}"
+            self.seq_table.insert(
+                "",
+                "end",
+                values=(i + 1, step["state"], f"{step['duration']:.2f}"),
+                tags=(tag,),
             )
 
-        if keep_message or self.sequence_running:
+    def _on_table_select(self, _event=None):
+        sel = self.seq_table.selection()
+        if not sel:
             return
-        if not self.sequence_steps:
-            self.sequence_status.configure(
-                text="Sequence idle. Add blocks, drag to move, and connect them."
-            )
-        elif mode == "connected":
-            self.sequence_status.configure(
-                text=f"{len(self.sequence_steps)} blocks ready (connected order)"
-            )
-        else:
-            self.sequence_status.configure(
-                text=(
-                    f"{len(self.sequence_steps)} blocks ready (layout order). "
-                    "Connect all blocks to lock execution order."
-                )
-            )
-
-    def _redraw_sequence_links(self):
-        self.sequence_canvas.delete("sequence_link")
-        for source_id, target_id in list(self.sequence_links.items()):
-            if (
-                source_id not in self.sequence_nodes
-                or target_id not in self.sequence_nodes
-            ):
-                self.sequence_links.pop(source_id, None)
-                continue
-            source = self.sequence_nodes[source_id]
-            target = self.sequence_nodes[target_id]
-            sx = source["x"] + source["width"] + 6
-            sy = source["y"] + source["height"] / 2
-            tx = target["x"] - 6
-            ty = target["y"] + target["height"] / 2
-
-            self.sequence_canvas.create_line(
-                sx,
-                sy,
-                tx,
-                ty,
-                fill="#A5D6A7",
-                width=2,
-                arrow=tk.LAST,
-                arrowshape=(10, 12, 4),
-                smooth=True,
-                tags=("sequence_link",),
-            )
-        self.sequence_canvas.tag_lower("sequence_link")
-
-    def _normalize_sequence_canvas_scrollregion(self):
-        bbox = self.sequence_canvas.bbox("all")
-        width = max(self.sequence_canvas.winfo_width(), 1)
-        height = max(self.sequence_canvas.winfo_height(), 1)
-        if not bbox:
-            self.sequence_canvas.configure(scrollregion=(0, 0, width, height))
-            return
-        x1, y1, x2, y2 = bbox
-        right = max(int(x2 + 120), width)
-        bottom = max(int(y2 + 120), height)
-        self.sequence_canvas.configure(scrollregion=(0, 0, right, bottom))
-
-    def _on_sequence_canvas_configure(self, _event=None):
-        self._normalize_sequence_canvas_scrollregion()
-
-    def _on_sequence_canvas_press(self, event):
-        if self.sequence_running:
-            return "break"
-        node_id = self._node_id_from_canvas_event(event)
-        if node_id is None:
-            self.pending_link_source = None
-            self._select_sequence_node(None)
-            self.drag_node_id = None
-            return "break"
-
-        self._select_sequence_node(node_id)
-        if (
-            self.pending_link_source
-            and self.pending_link_source in self.sequence_nodes
-            and self.pending_link_source != node_id
-        ):
-            self._connect_sequence_nodes(self.pending_link_source, node_id)
-
-        self.drag_node_id = node_id
-        self.drag_last_x = self.sequence_canvas.canvasx(event.x)
-        self.drag_last_y = self.sequence_canvas.canvasy(event.y)
-        return "break"
-
-    def _on_sequence_canvas_drag(self, event):
-        if self.sequence_running or not self.drag_node_id:
-            return "break"
-        if self.drag_node_id not in self.sequence_nodes:
-            self.drag_node_id = None
-            return "break"
-
-        x = self.sequence_canvas.canvasx(event.x)
-        y = self.sequence_canvas.canvasy(event.y)
-        dx = x - self.drag_last_x
-        dy = y - self.drag_last_y
-        if dx == 0 and dy == 0:
-            return "break"
-
-        node = self.sequence_nodes[self.drag_node_id]
-        node["x"] = max(20, node["x"] + dx)
-        node["y"] = max(20, node["y"] + dy)
-        for item in node["items"]:
-            self.sequence_canvas.move(item, dx, dy)
-        self.drag_last_x = x
-        self.drag_last_y = y
-
-        self._redraw_sequence_links()
-        self._normalize_sequence_canvas_scrollregion()
-        return "break"
-
-    def _on_sequence_canvas_release(self, _event):
-        self.drag_node_id = None
-        self._refresh_sequence_box(keep_message=True)
-        return "break"
+        idx = self.seq_table.index(sel[0])
+        if 0 <= idx < len(self.sequence_steps):
+            step = self.sequence_steps[idx]
+            self.seq_state_var.set(step["state"])
+            self.seq_duration_var.set(f"{step['duration']:.2f}")
 
     def _start_sequence(self, loop_mode):
         if self.busy or self.detecting or self.sequence_running:
             return
-        self._refresh_sequence_box(keep_message=True)
         if not self.controller.is_connected():
             messagebox.showwarning(
                 "Not Connected", "Connect to Arduino before running a sequence."
@@ -1800,8 +1390,7 @@ class ValveApp(ctk.CTk):
             self.connect_btn.configure(
                 text="Disconnect",
                 state="normal" if not self.busy else "disabled",
-                fg_color="#C62828",
-                hover_color="#E53935",
+                fg_color="#991b1b", hover_color="#b91c1c", text_color="#fecaca",
             )
             self.port_menu.configure(state="disabled")
             self.refresh_btn.configure(state="disabled")
@@ -1810,8 +1399,7 @@ class ValveApp(ctk.CTk):
             self.connect_btn.configure(
                 text="Connect",
                 state="normal" if not self.busy else "disabled",
-                fg_color="#2E7D32",
-                hover_color="#388E3C",
+                fg_color="#166534", hover_color="#15803d", text_color="#bbf7d0",
             )
             self.port_menu.configure(state="normal")
             self.refresh_btn.configure(state="normal")
@@ -1831,19 +1419,19 @@ class ValveApp(ctk.CTk):
 
     def _set_sequence_controls(self):
         connected = self.controller.is_connected()
-        has_steps = bool(self.sequence_nodes)
+        has_steps = bool(self.sequence_steps)
         editable = not self.sequence_running
 
         edit_state = "normal" if editable else "disabled"
         self.seq_state_menu.configure(state=edit_state)
         self.seq_duration_entry.configure(state=edit_state)
         self.seq_add_btn.configure(state=edit_state)
-        self.seq_update_btn.configure(state=edit_state)
+        self.seq_edit_btn.configure(state=edit_state)
         self.seq_remove_btn.configure(state=edit_state)
         self.seq_clear_btn.configure(state=edit_state)
         self.seq_demo_btn.configure(state=edit_state)
-        self.seq_connect_btn.configure(state=edit_state)
-        self.seq_disconnect_btn.configure(state=edit_state)
+        self.seq_up_btn.configure(state=edit_state)
+        self.seq_down_btn.configure(state=edit_state)
         self.return_center_chk.configure(state=edit_state)
 
         run_enabled = connected and has_steps and not self.busy and not self.detecting
@@ -1919,7 +1507,7 @@ class ValveApp(ctk.CTk):
                 self._zoom_out()
             return "break"
 
-        if hasattr(self, "sequence_canvas") and event.widget == self.sequence_canvas:
+        if hasattr(self, "seq_table") and event.widget is self.seq_table:
             return None
 
         units = 0
@@ -1937,52 +1525,32 @@ class ValveApp(ctk.CTk):
             return "break"
         return None
 
-    def _on_sequence_mousewheel(self, event):
-        ctrl_pressed = bool(event.state & 0x0004)
-        if ctrl_pressed:
-            if event.delta > 0:
-                self._zoom_in()
-            elif event.delta < 0:
-                self._zoom_out()
-            return "break"
-
-        units = 0
-        if event.delta > 0:
-            units = -1
-        elif event.delta < 0:
-            units = 1
-        if units != 0:
-            self._scroll_sequence_box(units)
-        return "break"
-
-    def _scroll_sequence_box(self, units):
-        self.sequence_canvas.yview_scroll(units, "units")
-        return "break"
-
     def _show_state(self, state, source=None):
         if state is None:
-            self.state_label.configure(text="DISCONNECTED", text_color="#777777")
+            self.state_banner.configure(fg_color=self.BANNER_OFF_BG)
+            self.state_label.configure(text="DISCONNECTED", text_color=self.TEXT_MUTED)
             self.state_detail.configure(text="Select a COM port and connect")
             self.source_label.configure(text="")
             return
 
+        bg = self.STATE_BANNER_BG.get(state, self.BANNER_OFF_BG)
+        self.state_banner.configure(fg_color=bg)
+
         names = {"A": "POSITION A", "B": "POSITION B", "C": "CENTER"}
-        color = self.STATE_COLORS.get(state, "#777777")
+        color = self.STATE_COLORS.get(state, self.TEXT_MUTED)
         self.state_label.configure(text=names.get(state, state), text_color=color)
         self.state_detail.configure(text=self._get_state_label(state))
 
-        if source == "button":
-            self.source_label.configure(text="Changed via hardware buttons")
-        elif source == "ui":
-            self.source_label.configure(text="Changed via UI")
-        elif source == "sequence":
-            self.source_label.configure(text="Changed via sequence")
-        elif source == "sync":
-            self.source_label.configure(text="Synced from controller")
-        else:
-            self.source_label.configure(text="")
+        source_text = {
+            "button": "Changed via hardware buttons",
+            "ui": "Changed via UI",
+            "sequence": "Changed via sequence",
+            "sync": "Synced from controller",
+        }
+        self.source_label.configure(text=source_text.get(source, ""))
 
     def on_close(self):
+        self._close_probed_serial()
         self.sequence_stop_event.set()
         if self.sequence_thread and self.sequence_thread.is_alive():
             self.sequence_thread.join(timeout=1.5)
