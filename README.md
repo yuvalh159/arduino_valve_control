@@ -88,8 +88,9 @@ The difference is purely mechanical (internal spool design):
   ┌─────────┐    USB     ┌───────────────────────────────────────────┐
   │         │◄───────────►│              Arduino Uno                  │
   │   PC    │             │                                           │
-  │ Python  │             │   Pin 7 ──────────► Relay Module IN1      │
-  │   UI    │             │   Pin 8 ──────────► Relay Module IN2      │
+  │ Python  │             │   Pin 2 ── Button ── GND (cycle C→A→B→C) │
+  │   UI    │             │   Pin 7 ──────────► Relay Module IN1      │
+  │         │             │   Pin 8 ──────────► Relay Module IN2      │
   │         │             │   5V ─────────────► Relay Module VCC      │
   └─────────┘             │   GND ────────┬──► Relay Module GND      │
                           └───────────────┼──────────────────────────┘
@@ -244,6 +245,7 @@ We use **NO** so that power-off = solenoids off = safe.
    - Type `B` + Enter → response: `OK:B` (Relay 2 clicks ON)
    - Type `C` + Enter → response: `OK:C` (both relays OFF)
    - Type `?` + Enter → response: `STATE:C` (current state)
+   - Press the hardware button → Arduino sends `BTN:<state>` (e.g. `BTN:A`)
 8. **Close Serial Monitor** before running the Python UI
 
 ### Step 2: Install Python Dependencies
