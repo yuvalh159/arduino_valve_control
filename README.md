@@ -1,14 +1,15 @@
-# Airtec 4V130 C/E/P - M5 Valve Controller
+# Airtec 4V120 - M5 Valve Controller
 
-Control an Airtec 4V130 (5/3 way pneumatic solenoid valve, 12VDC) from a
+Control an Airtec 4V120 (5/2 way bistable pneumatic solenoid valve, 12VDC) from a
 Python desktop app through an Arduino and a 2-channel relay module.
 
-Supports all three center-position variants: **C** (Closed), **E** (Exhaust), **P** (Pressure).
+The 4V120 is a **bistable (latching)** valve with two positions — it stays in
+the last commanded position even when both solenoids are de-energised.
 
 **Features:**
 - Professional dark-themed Python UI (customtkinter, Tailwind slate palette)
 - Always-visible state banner — changes color to match current valve position
-- 3 hardware buttons for standalone control (A / B / Center)
+- 2 hardware buttons for standalone control (A / B)
 - EEPROM state persistence — survives brown-out resets from relay power draw
 - EMI-guarded button inputs — relay switching noise can't trigger false presses
 - COM port auto-detection with single-reset probe handoff (no double solenoid click)
@@ -35,12 +36,12 @@ Supports all three center-position variants: **C** (Closed), **E** (Exhaust), **
 
 | # | Item | Specs / Notes |
 |---|------|---------------|
-| 1 | Arduino Uno (or Nano/Leonardo) | Any board with 5 digital pins + USB serial |
+| 1 | Arduino Uno (or Nano/Leonardo) | Any board with 4 digital pins + USB serial |
 | 2 | 2-Channel 5V Relay Module | 5V coil, switching side rated 12VDC / 1A or higher |
-| 3 | Airtec 4V130 C/E/P - M5 | 5/3 way solenoid valve, **12VDC coils** |
+| 3 | Airtec 4V120 - M5 | 5/2 way bistable solenoid valve, **12VDC coils** |
 | 4 | 12VDC Power Supply | 1A minimum (each solenoid coil draws ~300-500mA) |
 | 5 | USB Cable | Type-B (Uno), Mini-USB (Nano), or Micro-USB (Leonardo) |
-| 6 | 3x Momentary Pushbuttons | For direct hardware A/B/C control (optional) |
+| 6 | 2x Momentary Pushbuttons | For direct hardware A/B control (optional) |
 | 7 | Jumper Wires | Male-to-female for relay connections |
 | 8 | PC with Python 3.8+ | Windows / Linux / macOS |
 
@@ -48,25 +49,27 @@ Supports all three center-position variants: **C** (Closed), **E** (Exhaust), **
 
 ## 1. Understanding the Valve
 
-### What is a 5/3 Valve?
+### What is a 5/2 Valve?
 
-5 ports, 3 positions. Two solenoid coils select between three air routing states.
+5 ports, 2 positions. Two solenoid coils switch between two air routing states.
+The valve is **bistable** — it latches in the last commanded position and holds
+it mechanically even when both solenoids are turned off.
 
 ### Ports
 
 ```
          ┌──────────────────────────────────────┐
-         │          Airtec 4V130 - M5            │
+         │          Airtec 4V120 - M5            │
          │                                       │
   Sol A ─┤                                       ├─ Sol B
-         │     ┌────────┬────────┬────────┐      │
-         │     │  Pos A │ Center │  Pos B │      │
-         │     └───┬────┴───┬────┴───┬────┘      │
-         └─────────┼────────┼────────┼───────────┘
-                   │        │        │
-              Port 2 (A)  Port 1 (P)  Port 4 (B)
-                   │                     │
-              Port 3 (EA)           Port 5 (EB)
+         │         ┌────────┬────────┐           │
+         │         │  Pos A │  Pos B │           │
+         │         └───┬────┴───┬────┘           │
+         └─────────────┼────────┼────────────────┘
+                       │        │
+                  Port 2 (A)  Port 1 (P)  Port 4 (B)
+                       │                     │
+                  Port 3 (EA)           Port 5 (EB)
 ```
 
 | Port | Label | Function |
@@ -82,25 +85,11 @@ Supports all three center-position variants: **C** (Closed), **E** (Exhaust), **
 | Position | Solenoid A | Solenoid B | Air Flow |
 |----------|-----------|-----------|----------|
 | **A** | ON | OFF | P → A, B → EB (exhaust) |
-| **Center** | OFF | OFF | Depends on variant (see below) |
 | **B** | OFF | ON | P → B, A → EA (exhaust) |
 
-### Center Variants
-
-All three variants are **electrically identical** — same wiring, same control.
-The difference is purely mechanical (internal spool design):
-
-| Variant | Model Name | Center Behaviour |
-|---------|-----------|-----------------|
-| **C** | 4V130**C**-M5 | All ports blocked — no air flows, actuator holds position |
-| **E** | 4V130**E**-M5 | A and B vent to exhaust — actuator depressurises |
-| **P** | 4V130**P**-M5 | Pressure sent to A and B — actuator locks in place |
-
-> **Not sure which variant you have?** Connect everything, put the valve in
-> Position A, then press CENTER and observe what your actuator does.
-> - Holds position → **C** (Closed)
-> - Goes limp / retracts → **E** (Exhaust)
-> - Locks stiff / doesn't move → **P** (Pressure)
+> **Bistable behaviour:** When both solenoids are off, the valve stays in
+> whichever position it was last switched to. There is no spring return and
+> no center position.
 
 ---
 
@@ -112,7 +101,7 @@ The difference is purely mechanical (internal spool design):
   ┌─────────┐    USB     ┌───────────────────────────────────────────┐
   │         │◄───────────►│              Arduino Uno                  │
   │   PC    │             │                                           │
-  │ Python  │             │   Pin 2/3/4 ─ Buttons A/B/C ─ GND         │
+  │ Python  │             │   Pin 2/3 ── Buttons A/B ── GND           │
   │   UI    │             │   Pin 7 ──────────► Relay Module IN1      │
   │         │             │   Pin 8 ──────────► Relay Module IN2      │
   │         │             │   (Ext 5V) ───────► Relay Module VCC      │
@@ -136,7 +125,7 @@ The difference is purely mechanical (internal spool design):
             │                   │                                      │
             ▼                   ▼                                      │
   ┌─────────────────────────────────────────────┐                     │
-  │          Airtec 4V130 C/E/P - M5            │                     │
+  │          Airtec 4V120 - M5                  │                     │
   │                                              │                     │
   │   Solenoid A (+) ◄── Relay 1 NO             │                     │
   │   Solenoid A (-) ──────────────────► 12V GND ┼──► COMMON GROUND   │
@@ -174,16 +163,15 @@ Use jumper wires. These carry only 5V logic signals.
 
 #### Step A2: Direct Hardware Buttons (optional but recommended)
 
-Use three momentary pushbuttons for direct valve state selection.
+Use two momentary pushbuttons for direct valve position selection.
 No resistor needed — the Arduino uses internal pullups.
 
 | Arduino Pin | Button | Other Side |
 |-------------|--------|------------|
 | **Pin 2** | **A button** | **GND** |
 | **Pin 3** | **B button** | **GND** |
-| **Pin 4** | **C button (Center)** | **GND** |
 
-Pressing a button sets the valve directly to that state.
+Pressing a button sets the valve directly to that position.
 Works with or without the PC connected. The UI auto-syncs when it detects
 a button event.
 
@@ -200,7 +188,8 @@ We use **COM** and **NO** only.
 | Signal out | **Relay 2 NO** | → | **Solenoid B (+)** |
 
 > **Why NO (Normally Open)?** When Arduino loses power or resets, relays
-> de-energize and the NO contacts open → solenoids turn OFF → safe state.
+> de-energize and the NO contacts open → solenoids turn OFF. The valve
+> stays in its last position (bistable latch) — a safe default.
 
 #### Step C: Ground Connections (CRITICAL)
 
@@ -252,7 +241,7 @@ Most 2-channel relay modules look like this:
 - **NO** = Normally Open — disconnected when relay is OFF, connected when ON
 - **NC** = Normally Closed — connected when relay is OFF, disconnected when ON
 
-We use **NO** so that power-off = solenoids off = safe.
+We use **NO** so that power-off = solenoids off = valve holds last position (safe).
 
 ---
 
@@ -267,11 +256,10 @@ We use **NO** so that power-off = solenoids off = safe.
 5. Click **Upload** (arrow button)
 6. Open **Serial Monitor** at **9600 baud** — you should see `READY`
 7. Test commands manually:
-   - Type `A` + Enter → response: `OK:A` (Relay 1 clicks ON)
-   - Type `B` + Enter → response: `OK:B` (Relay 2 clicks ON)
-   - Type `C` + Enter → response: `OK:C` (both relays OFF)
-   - Type `?` + Enter → response: `STATE:C` (current state)
-   - Press any hardware A/B/C button → Arduino sends `BTN:<state>` (e.g. `BTN:A`)
+   - Type `A` + Enter → response: `OK:A` (Relay 1 clicks ON — valve to Position A)
+   - Type `B` + Enter → response: `OK:B` (Relay 2 clicks ON — valve to Position B)
+   - Type `?` + Enter → response: `STATE:A` or `STATE:B` (current position)
+   - Press hardware A/B button → Arduino sends `BTN:A` or `BTN:B`
 8. **Close Serial Monitor** before running the Python UI
 
 ### Step 2: Install Python Dependencies
@@ -295,30 +283,29 @@ python valve_ui.py
 1. Click **Refresh** to list ports, or **Detect Arduino** to auto-select a likely COM port
    - Detect keeps the serial connection open so the following Connect reuses
      it — the Arduino only resets once (no double solenoid click)
-2. Select your **valve variant** (C / E / P) from the Variant dropdown
-3. Click **Connect** — instant if Detect already found the port, otherwise
+2. Click **Connect** — instant if Detect already found the port, otherwise
    wait ~2 seconds for Arduino handshake
-4. (Optional) click **Read State** to sync UI with controller state
-5. Use manual controls:
+3. (Optional) click **Read State** to sync UI with controller state
+4. Use manual controls:
 
 | Button | Color | Action |
 |--------|-------|--------|
 | **POSITION A** | Blue | Energizes Solenoid A: P → A, B → Exhaust |
-| **CENTER** | Green | Both solenoids off: center position (variant-specific behavior) |
 | **POSITION B** | Orange | Energizes Solenoid B: P → B, A → Exhaust |
 
-6. Use the **Sequence Builder** to automate repeatable patterns:
-   - Pick a state (`A`, `B`, or `C`) and a duration, then click **+ Add**
+5. Use the **Sequence Builder** to automate repeatable patterns:
+   - Pick a state (`A` or `B`) and a duration, then click **+ Add**
    - Steps appear in a table — select a row and use **Edit** to change it
    - Reorder with **Up** / **Down** buttons
    - **Remove** deletes the selected step, **Clear** empties the table
-   - **Demo** loads a sample 5-step sequence
+   - **Demo** loads a sample 4-step A/B alternating sequence
    - **Run Once** executes the table top-to-bottom, **Loop** repeats until stopped
-   - **Stop** halts the sequence and optionally returns to Center
-7. The fixed **state banner** at the top always shows the current valve
-   position with a color-coded background (blue / orange / green)
-8. Use `Ctrl +`, `Ctrl -`, `Ctrl 0`, and mouse wheel scrolling to fit UI to your screen
-9. Click **Disconnect** or close the window — the valve safely returns to CENTER
+   - **Stop** halts the sequence (valve stays in last position)
+6. The fixed **state banner** at the top always shows the current valve
+   position with a color-coded background (blue for A / orange for B)
+7. Use `Ctrl +`, `Ctrl -`, `Ctrl 0`, and mouse wheel scrolling to fit UI to your screen
+8. Click **Disconnect** or close the window — the valve stays in its last
+   position (bistable latch, no solenoid actuation on disconnect)
 
 ---
 
@@ -329,11 +316,11 @@ python valve_ui.py
 | Both solenoids never ON simultaneously | `applyOutputs()` always sets one LOW before the other HIGH |
 | EEPROM state persistence | If the relay power draw resets the Arduino, it restores the last state on boot |
 | Single-reset probe handoff | Detect Arduino keeps the serial connection open so Connect reuses it — only one Arduino reset |
-| Disconnect sends CENTER first | Closing the UI de-energises both solenoids before dropping serial |
-| NO relay terminals used | If Arduino resets or loses power, relays open → solenoids OFF |
+| Bistable latch on disconnect | Closing the UI just drops serial — valve stays in last position, no unexpected movement |
+| NO relay terminals used | If Arduino resets or loses power, relays open → solenoids OFF → valve holds position |
 | Onboard LED (Pin 13) mirrors state | Quick visual — LED ON = a solenoid is energised |
 | EMI guard on buttons (400ms) | Relay switching noise can't trigger false button presses |
-| Hardware A/B/C buttons have 200ms debounce | Prevents accidental multi-triggering |
+| Hardware A/B buttons have 200ms debounce | Prevents accidental multi-triggering |
 | Buttons work without PC connected | Arduino runs standalone — useful for field testing |
 
 ---
@@ -353,7 +340,7 @@ python valve_ui.py
 | Sequence stops unexpectedly | Hardware button press or serial interruption | Check status bar message, reconnect if needed |
 | Relay chatters / flickers | Missing common ground | Connect 12V PSU GND to Arduino GND |
 | Arduino resets when relay switches | Relay module drawing too much from 5V | Power relay VCC from external 5V (see Completed Improvements) |
-| Hardware A/B/C buttons do nothing | Button wired to wrong pin or not to GND | Verify Pin 2=A, Pin 3=B, Pin 4=C, all using INPUT_PULLUP wiring |
+| Hardware A/B buttons do nothing | Button wired to wrong pin or not to GND | Verify Pin 2=A, Pin 3=B, both using INPUT_PULLUP wiring |
 | Buttons trigger wrong state after relay click | EMI from relay switching | EMI guard (400ms) should handle this; increase `EMI_GUARD_MS` if needed |
 
 ---
@@ -364,14 +351,13 @@ python valve_ui.py
 
 ```
 ═══════════════════════════════════════════════════════
-  AIRTEC 4V130 - WIRING QUICK REFERENCE (12VDC)
+  AIRTEC 4V120 - WIRING QUICK REFERENCE (12VDC)
 ═══════════════════════════════════════════════════════
 
   ARDUINO              RELAY MODULE         VALVE / PSU
   ─────────────────    ────────────────     ─────────────
   Pin 2  ── Btn A ── GND
   Pin 3  ── Btn B ── GND
-  Pin 4  ── Btn C ── GND
   Pin 7  ──────────►   IN1
   Pin 8  ──────────►   IN2
   Ext 5V ──────────►   VCC  (separate 5V source, NOT Arduino 5V)
@@ -386,7 +372,7 @@ python valve_ui.py
 
 ═══════════════════════════════════════════════════════
   COMMANDS (Serial 9600 baud)
-  A = Position A  |  B = Position B  |  C = Center
+  A = Position A  |  B = Position B  |  ? = Read state
 ═══════════════════════════════════════════════════════
 ```
 

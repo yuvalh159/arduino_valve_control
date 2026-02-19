@@ -1,6 +1,7 @@
 """
-Python UI for controlling Airtec 4V130 C/E/P-M5 valve via Arduino.
-Supports UI commands, hardware A/B/C button updates, COM auto-detection, and sequences.
+Python UI for controlling Airtec 4V120-M5 valve via Arduino.
+The 4V120 is a 5/2 bistable (latching) valve with two positions: A and B.
+Supports UI commands, hardware A/B button updates, COM auto-detection, and sequences.
 Requires: pyserial, customtkinter
 Usage:    python valve_ui.py
 """
@@ -45,11 +46,6 @@ class ValveController:
         with self.lock:
             self._stop_reader()
             if self.ser and self.ser.is_open:
-                try:
-                    self.ser.write(b"C")
-                    time.sleep(0.15)
-                except Exception:
-                    pass
                 self.ser.close()
             self.ser = None
             self._clear_queues()
@@ -74,7 +70,6 @@ class ValveController:
                 except queue.Empty:
                     continue
 
-                # Ignore boot banner if it arrives late.
                 if line == "READY":
                     continue
 
@@ -82,14 +77,12 @@ class ValveController:
                     return line
                 if line.startswith(expected_prefix):
                     return line
-                # Keep compatibility with unexpected but valid responses.
                 if line.startswith(("OK:", "STATE:")):
                     return line
 
         raise TimeoutError("No response from Arduino")
 
     def get_button_events(self):
-        """Return state changes triggered by hardware A/B/C buttons."""
         events = []
         while True:
             try:
@@ -215,26 +208,8 @@ class ValveApp(ctk.CTk):
     USER_ZOOM_MAX = 1.60
     USER_ZOOM_STEP = 0.10
 
-    VARIANTS = {
-        "C  -  Closed Center": {
-            "btn": "CENTER\nAll Blocked",
-            "status": "Center  -  All ports blocked",
-            "hint": "All ports blocked while centered",
-        },
-        "E  -  Exhaust Center": {
-            "btn": "CENTER\nA+B Exhaust",
-            "status": "Center  -  A and B exhaust",
-            "hint": "A and B vent to exhaust while centered",
-        },
-        "P  -  Pressure Center": {
-            "btn": "CENTER\nA+B Pressurized",
-            "status": "Center  -  Pressure to A and B",
-            "hint": "Pressure sent to A and B while centered",
-        },
-    }
-
-    STATE_COLORS = {"A": "#60a5fa", "B": "#fb923c", "C": "#4ade80"}
-    STATE_BANNER_BG = {"A": "#1e3a5f", "B": "#431407", "C": "#14532d"}
+    STATE_COLORS = {"A": "#60a5fa", "B": "#fb923c"}
+    STATE_BANNER_BG = {"A": "#1e3a5f", "B": "#431407"}
     BANNER_OFF_BG = "#1e293b"
 
     CARD = "#1e293b"
@@ -251,7 +226,7 @@ class ValveApp(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        self.title("Airtec 4V130  -  Valve Controller")
+        self.title("Airtec 4V120  -  Valve Controller")
         self.geometry(f"{self.BASE_WIDTH}x{self.BASE_HEIGHT}")
         self.minsize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self.resizable(True, True)
@@ -262,7 +237,7 @@ class ValveApp(ctk.CTk):
         ctk.set_widget_scaling(self._ui_scale)
 
         self.controller = ValveController()
-        self.current_state = "C"
+        self.current_state = "A"
         self.busy = False
         self.detecting = False
 
@@ -326,7 +301,7 @@ class ValveApp(ctk.CTk):
 
         ctk.CTkLabel(
             title_bar,
-            text="Airtec 4V130 Valve Controller",
+            text="Airtec 4V120 Valve Controller",
             font=("Segoe UI", 14, "bold"),
             text_color="#e2e8f0",
         ).grid(row=0, column=0, padx=20, pady=10, sticky="w")
@@ -451,45 +426,25 @@ class ValveApp(ctk.CTk):
             row=3, column=0, columnspan=5, padx=16, pady=(0, 10), sticky="ew",
         )
 
-        # ── Valve Control card (variant + buttons combined) ──
+        # ── Valve Control card ──
         ctrl = self._card(self.page)
         ctrl.grid(row=1, column=0, padx=pad_x, pady=gap, sticky="ew")
-        ctrl.grid_columnconfigure((0, 1, 2), weight=1)
+        ctrl.grid_columnconfigure((0, 1), weight=1)
 
-        self._section_label(ctrl, "Valve Control").grid(
-            row=0, column=0, columnspan=3, padx=16, pady=(10, 6), sticky="w",
+        header_row = ctk.CTkFrame(ctrl, fg_color="transparent")
+        header_row.grid(row=0, column=0, columnspan=2, padx=16, pady=(10, 6), sticky="ew")
+        header_row.grid_columnconfigure(0, weight=1)
+
+        self._section_label(header_row, "Valve Control").grid(
+            row=0, column=0, sticky="w",
         )
-
-        var_row = ctk.CTkFrame(ctrl, fg_color="transparent")
-        var_row.grid(row=1, column=0, columnspan=3, padx=16, pady=(0, 6), sticky="ew")
-        var_row.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(
-            var_row, text="Variant", font=("Segoe UI", 12), text_color="#cbd5e1",
-        ).grid(row=0, column=0, padx=(0, 8), sticky="w")
-
-        self.variant_var = ctk.StringVar(value=list(self.VARIANTS.keys())[0])
-        self.variant_menu = ctk.CTkOptionMenu(
-            var_row, variable=self.variant_var,
-            values=list(self.VARIANTS.keys()),
-            command=self._on_variant_change, width=220, corner_radius=8,
-            font=("Segoe UI", 12),
-            fg_color="#334155", button_color="#475569", button_hover_color="#64748b",
-        )
-        self.variant_menu.grid(row=0, column=1, padx=4, sticky="w")
-
-        self.variant_hint = ctk.CTkLabel(
-            var_row, text=self.VARIANTS[self.variant_var.get()]["hint"],
-            font=("Segoe UI", 10, "italic"), text_color=self.TEXT_MUTED,
-        )
-        self.variant_hint.grid(row=0, column=2, padx=(12, 4), sticky="w")
 
         self.read_state_btn = ctk.CTkButton(
-            var_row, text="Read State", width=95, corner_radius=btn_r,
+            header_row, text="Read State", width=95, corner_radius=btn_r,
             command=self._query_state, font=("Segoe UI", 12),
             fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
         )
-        self.read_state_btn.grid(row=0, column=3)
+        self.read_state_btn.grid(row=0, column=1, sticky="e")
 
         btn_h = 66
         btn_font = ("Segoe UI", 13, "bold")
@@ -499,22 +454,14 @@ class ValveApp(ctk.CTk):
             fg_color="#1d4ed8", hover_color="#2563eb", font=btn_font,
             command=lambda: self._send("A"),
         )
-        self.btn_a.grid(row=2, column=0, padx=(16, 5), pady=(6, 16), sticky="ew")
-
-        variant_info = self.VARIANTS[self.variant_var.get()]
-        self.btn_c = ctk.CTkButton(
-            ctrl, text=variant_info["btn"], height=btn_h, corner_radius=10,
-            fg_color="#166534", hover_color="#15803d", font=btn_font,
-            command=lambda: self._send("C"),
-        )
-        self.btn_c.grid(row=2, column=1, padx=5, pady=(6, 16), sticky="ew")
+        self.btn_a.grid(row=1, column=0, padx=(16, 5), pady=(6, 16), sticky="ew")
 
         self.btn_b = ctk.CTkButton(
             ctrl, text="POSITION B\nSolenoid B", height=btn_h, corner_radius=10,
             fg_color="#c2410c", hover_color="#ea580c", font=btn_font,
             command=lambda: self._send("B"),
         )
-        self.btn_b.grid(row=2, column=2, padx=(5, 16), pady=(6, 16), sticky="ew")
+        self.btn_b.grid(row=1, column=1, padx=(5, 16), pady=(6, 16), sticky="ew")
 
         # ── Sequence Builder card ──
         seq = self._card(self.page)
@@ -535,7 +482,7 @@ class ValveApp(ctk.CTk):
 
         self.seq_state_var = ctk.StringVar(value="A")
         self.seq_state_menu = ctk.CTkOptionMenu(
-            editor, variable=self.seq_state_var, values=["A", "B", "C"],
+            editor, variable=self.seq_state_var, values=["A", "B"],
             width=70, corner_radius=8, font=("Segoe UI", 12),
             fg_color="#334155", button_color="#475569", button_hover_color="#64748b",
         )
@@ -634,7 +581,6 @@ class ValveApp(ctk.CTk):
 
         self.seq_table.tag_configure("state_A", background="#172554")
         self.seq_table.tag_configure("state_B", background="#431407")
-        self.seq_table.tag_configure("state_C", background="#14532d")
 
         # Move + run bar
         action_bar = ctk.CTkFrame(seq, fg_color="transparent")
@@ -683,21 +629,13 @@ class ValveApp(ctk.CTk):
 
         bottom_bar = ctk.CTkFrame(seq, fg_color="transparent")
         bottom_bar.grid(row=4, column=0, padx=16, pady=(0, 10), sticky="ew")
-        bottom_bar.grid_columnconfigure(1, weight=1)
-
-        self.return_center_var = ctk.BooleanVar(value=True)
-        self.return_center_chk = ctk.CTkCheckBox(
-            bottom_bar, text="Return to Center after sequence",
-            variable=self.return_center_var, font=("Segoe UI", 11),
-            checkbox_width=18, checkbox_height=18, corner_radius=4,
-        )
-        self.return_center_chk.grid(row=0, column=0, pady=2, sticky="w")
+        bottom_bar.grid_columnconfigure(0, weight=1)
 
         self.sequence_status = ctk.CTkLabel(
             bottom_bar, text="Sequence idle",
             font=("Segoe UI", 10), text_color=self.TEXT_MUTED, anchor="e",
         )
-        self.sequence_status.grid(row=0, column=1, padx=(12, 0), pady=2, sticky="e")
+        self.sequence_status.grid(row=0, column=0, pady=2, sticky="e")
 
         # ── Status bar (fixed at bottom) ──
         self.status_bar = ctk.CTkLabel(
@@ -724,7 +662,7 @@ class ValveApp(ctk.CTk):
         if self.controller.is_connected():
             events = self.controller.get_button_events()
             for state in events:
-                if state in ("A", "B", "C"):
+                if state in ("A", "B"):
                     self.current_state = state
                     self._show_state(state, source="button")
                     if self.sequence_running:
@@ -752,20 +690,10 @@ class ValveApp(ctk.CTk):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    # Variant helpers
-    def _on_variant_change(self, _choice=None):
-        info = self.VARIANTS[self.variant_var.get()]
-        self.btn_c.configure(text=info["btn"])
-        self.variant_hint.configure(text=info["hint"])
-        if self.current_state == "C":
-            self._show_state("C")
-
     def _get_state_label(self, state):
-        info = self.VARIANTS[self.variant_var.get()]
         return {
-            "A": "Position A  -  P to A, B exhaust",
-            "B": "Position B  -  P to B, A exhaust",
-            "C": info["status"],
+            "A": "Position A  \u2014  P \u2192 A, B exhaust",
+            "B": "Position B  \u2014  P \u2192 B, A exhaust",
         }.get(state, state)
 
     # COM port helpers
@@ -987,11 +915,11 @@ class ValveApp(ctk.CTk):
                 return
 
             self._update_controls(connected=True)
-            state = "C"
+            state = "A"
             if result and ":" in result:
                 state = result.split(":")[-1]
-            if state not in ("A", "B", "C"):
-                state = "C"
+            if state not in ("A", "B"):
+                state = "A"
             self.current_state = state
             self._show_state(state)
             self.connected_port_label.configure(
@@ -1020,7 +948,6 @@ class ValveApp(ctk.CTk):
             self.busy = False
             self.sequence_running = False
             self.sequence_thread = None
-            self.current_state = "C"
             self._update_controls(connected=False)
             self._show_state(None)
             self.connected_port_label.configure(
@@ -1056,7 +983,7 @@ class ValveApp(ctk.CTk):
 
             if result and result.startswith("STATE:"):
                 state = result.split(":")[1]
-                if state in ("A", "B", "C"):
+                if state in ("A", "B"):
                     self.current_state = state
                     self._show_state(state, source="sync")
                     self.status_bar.configure(text=f"Controller reports state {state}")
@@ -1088,7 +1015,7 @@ class ValveApp(ctk.CTk):
 
             if result and result.startswith("OK:"):
                 state = result.split(":")[1]
-                if state in ("A", "B", "C"):
+                if state in ("A", "B"):
                     self.current_state = state
                     self._show_state(state, source="ui")
                 self.status_bar.configure(text=f"Valve set to {state}")
@@ -1222,15 +1149,14 @@ class ValveApp(ctk.CTk):
         if self.sequence_running:
             return
         self.sequence_steps = [
-            {"state": "C", "duration": 0.5},
-            {"state": "A", "duration": 1.2},
-            {"state": "C", "duration": 0.4},
-            {"state": "B", "duration": 1.2},
-            {"state": "C", "duration": 0.6},
+            {"state": "A", "duration": 1.0},
+            {"state": "B", "duration": 1.0},
+            {"state": "A", "duration": 0.5},
+            {"state": "B", "duration": 0.5},
         ]
         self._refresh_sequence_table()
         self._set_sequence_controls()
-        self.sequence_status.configure(text="Loaded demo sequence (5 steps)")
+        self.sequence_status.configure(text="Loaded demo sequence (4 steps)")
 
     def _refresh_sequence_table(self):
         for item in self.seq_table.get_children():
@@ -1267,7 +1193,6 @@ class ValveApp(ctk.CTk):
             return
 
         steps = [dict(step) for step in self.sequence_steps]
-        return_to_center = bool(self.return_center_var.get())
         self.sequence_total_steps = len(steps)
         self.sequence_running = True
         self.sequence_stop_event.clear()
@@ -1280,12 +1205,12 @@ class ValveApp(ctk.CTk):
 
         self.sequence_thread = threading.Thread(
             target=self._run_sequence_worker,
-            args=(steps, loop_mode, return_to_center),
+            args=(steps, loop_mode),
             daemon=True,
         )
         self.sequence_thread.start()
 
-    def _run_sequence_worker(self, steps, loop_mode, return_to_center):
+    def _run_sequence_worker(self, steps, loop_mode):
         loops = 0
         stopped = False
         error = None
@@ -1318,13 +1243,6 @@ class ValveApp(ctk.CTk):
                     break
 
             stopped = self.sequence_stop_event.is_set()
-            should_center = stopped or return_to_center
-            if should_center and self.controller.is_connected():
-                center_result = self.controller.send_command("C")
-                if center_result and center_result.startswith("OK:"):
-                    self.result_queue.put(
-                        lambda: self._show_state("C", source="sequence")
-                    )
         except Exception as exc:
             error = exc
         finally:
@@ -1414,7 +1332,6 @@ class ValveApp(ctk.CTk):
         state = "normal" if enabled and not self.sequence_running else "disabled"
         self.btn_a.configure(state=state)
         self.btn_b.configure(state=state)
-        self.btn_c.configure(state=state)
         self.read_state_btn.configure(state=state)
 
     def _set_sequence_controls(self):
@@ -1432,7 +1349,6 @@ class ValveApp(ctk.CTk):
         self.seq_demo_btn.configure(state=edit_state)
         self.seq_up_btn.configure(state=edit_state)
         self.seq_down_btn.configure(state=edit_state)
-        self.return_center_chk.configure(state=edit_state)
 
         run_enabled = connected and has_steps and not self.busy and not self.detecting
         self.seq_run_once_btn.configure(state="normal" if run_enabled else "disabled")
@@ -1536,7 +1452,7 @@ class ValveApp(ctk.CTk):
         bg = self.STATE_BANNER_BG.get(state, self.BANNER_OFF_BG)
         self.state_banner.configure(fg_color=bg)
 
-        names = {"A": "POSITION A", "B": "POSITION B", "C": "CENTER"}
+        names = {"A": "POSITION A", "B": "POSITION B"}
         color = self.STATE_COLORS.get(state, self.TEXT_MUTED)
         self.state_label.configure(text=names.get(state, state), text_color=color)
         self.state_detail.configure(text=self._get_state_label(state))

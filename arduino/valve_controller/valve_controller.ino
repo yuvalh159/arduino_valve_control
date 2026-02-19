@@ -1,11 +1,11 @@
-// Arduino controller for Airtec 4V130C-M5 (5/3 solenoid valve, 12VDC)
-// Serial commands (9600 baud): A = Pos A, B = Pos B, C = Center, ? = Status
+// Arduino controller for Airtec 4V120-M5 (5/2 bistable solenoid valve, 12VDC)
+// Serial commands (9600 baud): A = Position A, B = Position B, ? = Status
 // Pin 7 = Relay 1 (Solenoid A), Pin 8 = Relay 2 (Solenoid B)
-// Pin 2 = Button A, Pin 3 = Button B, Pin 4 = Button C (all to GND)
+// Pin 2 = Button A, Pin 3 = Button B (both to GND)
 //
-// NOTE: State is saved to EEPROM so the valve recovers after a reset.
-// If the relay module causes brown-out resets, power it from an external
-// 5V source instead of the Arduino's 5V pin.
+// The 4V120 is a bistable (latching) valve — it stays in the last commanded
+// position even when both solenoids are de-energised.
+// State is saved to EEPROM so the correct solenoid re-energises after reset.
 
 #include <EEPROM.h>
 
@@ -14,19 +14,18 @@ const int SOL_B_PIN = 8;
 const int LED_PIN   = 13;
 const int BTN_A_PIN = 2;
 const int BTN_B_PIN = 3;
-const int BTN_C_PIN = 4;
 
-const int BTN_PINS[3]    = {BTN_A_PIN, BTN_B_PIN, BTN_C_PIN};
-const char BTN_TARGETS[3] = {'A', 'B', 'C'};
+const int BTN_PINS[2]     = {BTN_A_PIN, BTN_B_PIN};
+const char BTN_TARGETS[2] = {'A', 'B'};
 
 const int EEPROM_ADDR = 0;
 
 const unsigned long EMI_GUARD_MS = 400;
 const unsigned long DEBOUNCE_MS  = 200;
 
-char currentState = 'C';
-bool btnPrev[3]   = {HIGH, HIGH, HIGH};
-unsigned long btnLastPress[3] = {0, 0, 0};
+char currentState = 'A';
+bool btnPrev[2]   = {HIGH, HIGH};
+unsigned long btnLastPress[2] = {0, 0};
 unsigned long lastChangeTime  = 0;
 
 void applyOutputs(char state) {
@@ -34,19 +33,14 @@ void applyOutputs(char state) {
     digitalWrite(SOL_A_PIN, HIGH);
     digitalWrite(SOL_B_PIN, LOW);
     digitalWrite(LED_PIN,   HIGH);
-  } else if (state == 'B') {
+  } else {
     digitalWrite(SOL_A_PIN, LOW);
     digitalWrite(SOL_B_PIN, HIGH);
     digitalWrite(LED_PIN,   HIGH);
-  } else {
-    digitalWrite(SOL_A_PIN, LOW);
-    digitalWrite(SOL_B_PIN, LOW);
-    digitalWrite(LED_PIN,   LOW);
   }
 }
 
 void setValve(char pos) {
-  // Save to EEPROM first (survives reset caused by relay power draw).
   if (pos != currentState) {
     EEPROM.update(EEPROM_ADDR, pos);
   }
@@ -57,8 +51,8 @@ void setValve(char pos) {
 
 char loadSavedState() {
   char saved = EEPROM.read(EEPROM_ADDR);
-  if (saved == 'A' || saved == 'B' || saved == 'C') return saved;
-  return 'C';
+  if (saved == 'A' || saved == 'B') return saved;
+  return 'A';
 }
 
 void setup() {
@@ -67,9 +61,7 @@ void setup() {
   pinMode(LED_PIN,   OUTPUT);
   pinMode(BTN_A_PIN, INPUT_PULLUP);
   pinMode(BTN_B_PIN, INPUT_PULLUP);
-  pinMode(BTN_C_PIN, INPUT_PULLUP);
 
-  // Restore saved state (handles brown-out recovery).
   char saved = loadSavedState();
   currentState = saved;
   applyOutputs(saved);
@@ -82,11 +74,11 @@ void checkButtons() {
   unsigned long now = millis();
 
   if (now - lastChangeTime < EMI_GUARD_MS) {
-    for (int i = 0; i < 3; i++) btnPrev[i] = digitalRead(BTN_PINS[i]);
+    for (int i = 0; i < 2; i++) btnPrev[i] = digitalRead(BTN_PINS[i]);
     return;
   }
 
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 2; i++) {
     bool reading = digitalRead(BTN_PINS[i]);
 
     if (reading == LOW && btnPrev[i] == HIGH && (now - btnLastPress[i] > DEBOUNCE_MS)) {
@@ -106,7 +98,7 @@ void loop() {
   if (Serial.available() > 0) {
     char cmd = Serial.read();
     switch (cmd) {
-      case 'A': case 'B': case 'C':
+      case 'A': case 'B':
         setValve(cmd);
         Serial.print("OK:");
         Serial.println(currentState);
