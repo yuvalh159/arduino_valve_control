@@ -5,7 +5,7 @@
 //
 // The 4V120 is a bistable (latching) valve — it stays in the last commanded
 // position even when both solenoids are de-energised.
-// State is saved to EEPROM so the correct solenoid re-energises after reset.
+// State is saved to EEPROM so the correct solenoid is pulsed after reset.
 
 #include <EEPROM.h>
 
@@ -20,6 +20,7 @@ const char BTN_TARGETS[2] = {'A', 'B'};
 
 const int EEPROM_ADDR = 0;
 
+const unsigned long PULSE_MS     = 150;
 const unsigned long EMI_GUARD_MS = 400;
 const unsigned long DEBOUNCE_MS  = 200;
 
@@ -28,16 +29,22 @@ bool btnPrev[2]   = {HIGH, HIGH};
 unsigned long btnLastPress[2] = {0, 0};
 unsigned long lastChangeTime  = 0;
 
-void applyOutputs(char state) {
-  if (state == 'A') {
+void pulseValve(char pos) {
+  digitalWrite(LED_PIN, HIGH);
+
+  if (pos == 'A') {
     digitalWrite(SOL_A_PIN, HIGH);
     digitalWrite(SOL_B_PIN, LOW);
-    digitalWrite(LED_PIN,   HIGH);
   } else {
     digitalWrite(SOL_A_PIN, LOW);
     digitalWrite(SOL_B_PIN, HIGH);
-    digitalWrite(LED_PIN,   HIGH);
   }
+
+  delay(PULSE_MS);
+
+  digitalWrite(SOL_A_PIN, LOW);
+  digitalWrite(SOL_B_PIN, LOW);
+  digitalWrite(LED_PIN, LOW);
 }
 
 void setValve(char pos) {
@@ -45,7 +52,7 @@ void setValve(char pos) {
     EEPROM.update(EEPROM_ADDR, pos);
   }
   currentState = pos;
-  applyOutputs(pos);
+  pulseValve(pos);
   lastChangeTime = millis();
 }
 
@@ -64,7 +71,7 @@ void setup() {
 
   char saved = loadSavedState();
   currentState = saved;
-  applyOutputs(saved);
+  pulseValve(saved);
 
   Serial.begin(9600);
   Serial.println("READY");

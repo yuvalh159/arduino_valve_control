@@ -292,9 +292,7 @@ class ValveApp(ctk.CTk):
         top.grid(row=0, column=0, sticky="ew")
         top.grid_columnconfigure(0, weight=1)
 
-        title_bar = ctk.CTkFrame(
-            top, corner_radius=0, fg_color=self.CARD, height=42
-        )
+        title_bar = ctk.CTkFrame(top, corner_radius=0, fg_color=self.CARD, height=42)
         title_bar.grid(row=0, column=0, sticky="ew")
         title_bar.grid_columnconfigure(0, weight=1)
         title_bar.grid_propagate(False)
@@ -310,53 +308,80 @@ class ValveApp(ctk.CTk):
         zoom_bar.grid(row=0, column=1, padx=(0, 16), pady=6, sticky="e")
 
         self.zoom_out_btn = ctk.CTkButton(
-            zoom_bar, text="\u2212", width=28, height=26, corner_radius=6,
-            command=self._zoom_out, font=("Segoe UI", 13, "bold"),
-            fg_color="#334155", hover_color="#475569",
+            zoom_bar,
+            text="\u2212",
+            width=28,
+            height=26,
+            corner_radius=6,
+            command=self._zoom_out,
+            font=("Segoe UI", 13, "bold"),
+            fg_color="#334155",
+            hover_color="#475569",
         )
         self.zoom_out_btn.grid(row=0, column=0, padx=(0, 3))
 
         self.zoom_label = ctk.CTkLabel(
-            zoom_bar, text="100%", width=48, anchor="center",
-            font=("Segoe UI", 10), text_color=self.TEXT_SEC,
+            zoom_bar,
+            text="100%",
+            width=48,
+            anchor="center",
+            font=("Segoe UI", 10),
+            text_color=self.TEXT_SEC,
         )
         self.zoom_label.grid(row=0, column=1, padx=2)
 
         self.zoom_in_btn = ctk.CTkButton(
-            zoom_bar, text="+", width=28, height=26, corner_radius=6,
-            command=self._zoom_in, font=("Segoe UI", 13, "bold"),
-            fg_color="#334155", hover_color="#475569",
+            zoom_bar,
+            text="+",
+            width=28,
+            height=26,
+            corner_radius=6,
+            command=self._zoom_in,
+            font=("Segoe UI", 13, "bold"),
+            fg_color="#334155",
+            hover_color="#475569",
         )
         self.zoom_in_btn.grid(row=0, column=2, padx=(3, 0))
 
         self.state_banner = ctk.CTkFrame(
-            top, corner_radius=0, fg_color=self.BANNER_OFF_BG, height=88,
+            top,
+            corner_radius=0,
+            fg_color=self.BANNER_OFF_BG,
+            height=88,
         )
         self.state_banner.grid(row=1, column=0, sticky="ew")
         self.state_banner.grid_columnconfigure(0, weight=1)
         self.state_banner.grid_propagate(False)
 
         self.state_label = ctk.CTkLabel(
-            self.state_banner, text="DISCONNECTED",
-            font=("Segoe UI", 26, "bold"), text_color=self.TEXT_MUTED,
+            self.state_banner,
+            text="DISCONNECTED",
+            font=("Segoe UI", 26, "bold"),
+            text_color=self.TEXT_MUTED,
         )
         self.state_label.grid(row=0, column=0, pady=(14, 0))
 
         self.state_detail = ctk.CTkLabel(
-            self.state_banner, text="Select a COM port and connect",
-            font=("Segoe UI", 12), text_color=self.TEXT_SEC,
+            self.state_banner,
+            text="Select a COM port and connect",
+            font=("Segoe UI", 12),
+            text_color=self.TEXT_SEC,
         )
         self.state_detail.grid(row=1, column=0, pady=(0, 2))
 
         self.source_label = ctk.CTkLabel(
-            self.state_banner, text="",
-            font=("Segoe UI", 10), text_color=self.TEXT_MUTED,
+            self.state_banner,
+            text="",
+            font=("Segoe UI", 10),
+            text_color=self.TEXT_MUTED,
         )
         self.source_label.grid(row=2, column=0, pady=(0, 8))
 
         # ── Scrollable body ──
         self.page = ctk.CTkScrollableFrame(
-            self, corner_radius=0, fg_color="transparent",
+            self,
+            corner_radius=0,
+            fg_color="transparent",
         )
         self.page.grid(row=1, column=0, sticky="nsew")
         self.page.grid_columnconfigure(0, weight=1)
@@ -371,59 +396,107 @@ class ValveApp(ctk.CTk):
         conn.grid_columnconfigure(1, weight=1)
 
         self._section_label(conn, "Connection").grid(
-            row=0, column=0, columnspan=5, padx=16, pady=(10, 4), sticky="w",
+            row=0,
+            column=0,
+            columnspan=5,
+            padx=16,
+            pady=(10, 4),
+            sticky="w",
         )
 
         ctk.CTkLabel(
-            conn, text="COM Port", font=("Segoe UI", 12), text_color="#cbd5e1",
+            conn,
+            text="COM Port",
+            font=("Segoe UI", 12),
+            text_color="#cbd5e1",
         ).grid(row=1, column=0, padx=(16, 8), pady=(4, 8), sticky="w")
 
         self.port_var = ctk.StringVar(value="No ports found")
         self.port_menu = ctk.CTkOptionMenu(
-            conn, variable=self.port_var, values=["No ports found"],
-            command=self._on_port_selected, width=145,
-            font=("Segoe UI", 12), corner_radius=8,
-            fg_color="#334155", button_color="#475569", button_hover_color="#64748b",
+            conn,
+            variable=self.port_var,
+            values=["No ports found"],
+            command=self._on_port_selected,
+            width=145,
+            font=("Segoe UI", 12),
+            corner_radius=8,
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#64748b",
         )
         self.port_menu.grid(row=1, column=1, padx=4, pady=(4, 8), sticky="w")
 
         btn_r = 8
 
         self.refresh_btn = ctk.CTkButton(
-            conn, text="Refresh", width=85, corner_radius=btn_r,
-            command=self._refresh_ports, font=("Segoe UI", 12),
-            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
+            conn,
+            text="Refresh",
+            width=85,
+            corner_radius=btn_r,
+            command=self._refresh_ports,
+            font=("Segoe UI", 12),
+            fg_color="#334155",
+            hover_color="#475569",
+            text_color="#cbd5e1",
         )
         self.refresh_btn.grid(row=1, column=2, padx=3, pady=(4, 8))
 
         self.detect_btn = ctk.CTkButton(
-            conn, text="Detect Arduino", width=125, corner_radius=btn_r,
-            command=self._detect_arduino_port, font=("Segoe UI", 12),
-            fg_color="#312e81", hover_color="#3730a3", text_color="#c7d2fe",
+            conn,
+            text="Detect Arduino",
+            width=125,
+            corner_radius=btn_r,
+            command=self._detect_arduino_port,
+            font=("Segoe UI", 12),
+            fg_color="#312e81",
+            hover_color="#3730a3",
+            text_color="#c7d2fe",
         )
         self.detect_btn.grid(row=1, column=3, padx=3, pady=(4, 8))
 
         self.connect_btn = ctk.CTkButton(
-            conn, text="Connect", width=110, corner_radius=btn_r,
-            command=self._toggle_connection, font=("Segoe UI", 12, "bold"),
-            fg_color="#166534", hover_color="#15803d", text_color="#bbf7d0",
+            conn,
+            text="Connect",
+            width=110,
+            corner_radius=btn_r,
+            command=self._toggle_connection,
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#166534",
+            hover_color="#15803d",
+            text_color="#bbf7d0",
         )
         self.connect_btn.grid(row=1, column=4, padx=(3, 16), pady=(4, 8))
 
         self.port_info_label = ctk.CTkLabel(
-            conn, text="Select a COM port to view USB details.",
-            font=("Segoe UI", 10), text_color=self.TEXT_MUTED, anchor="w",
+            conn,
+            text="Select a COM port to view USB details.",
+            font=("Segoe UI", 10),
+            text_color=self.TEXT_MUTED,
+            anchor="w",
         )
         self.port_info_label.grid(
-            row=2, column=0, columnspan=5, padx=16, pady=(0, 2), sticky="ew",
+            row=2,
+            column=0,
+            columnspan=5,
+            padx=16,
+            pady=(0, 2),
+            sticky="ew",
         )
 
         self.connected_port_label = ctk.CTkLabel(
-            conn, text="Not connected",
-            font=("Segoe UI", 10, "bold"), text_color=self.TEXT_MUTED, anchor="w",
+            conn,
+            text="Not connected",
+            font=("Segoe UI", 10, "bold"),
+            text_color=self.TEXT_MUTED,
+            anchor="w",
         )
         self.connected_port_label.grid(
-            row=3, column=0, columnspan=5, padx=16, pady=(0, 10), sticky="ew",
+            row=3,
+            column=0,
+            columnspan=5,
+            padx=16,
+            pady=(0, 10),
+            sticky="ew",
         )
 
         # ── Valve Control card ──
@@ -432,17 +505,27 @@ class ValveApp(ctk.CTk):
         ctrl.grid_columnconfigure((0, 1), weight=1)
 
         header_row = ctk.CTkFrame(ctrl, fg_color="transparent")
-        header_row.grid(row=0, column=0, columnspan=2, padx=16, pady=(10, 6), sticky="ew")
+        header_row.grid(
+            row=0, column=0, columnspan=2, padx=16, pady=(10, 6), sticky="ew"
+        )
         header_row.grid_columnconfigure(0, weight=1)
 
         self._section_label(header_row, "Valve Control").grid(
-            row=0, column=0, sticky="w",
+            row=0,
+            column=0,
+            sticky="w",
         )
 
         self.read_state_btn = ctk.CTkButton(
-            header_row, text="Read State", width=95, corner_radius=btn_r,
-            command=self._query_state, font=("Segoe UI", 12),
-            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
+            header_row,
+            text="Read State",
+            width=95,
+            corner_radius=btn_r,
+            command=self._query_state,
+            font=("Segoe UI", 12),
+            fg_color="#334155",
+            hover_color="#475569",
+            text_color="#cbd5e1",
         )
         self.read_state_btn.grid(row=0, column=1, sticky="e")
 
@@ -450,15 +533,25 @@ class ValveApp(ctk.CTk):
         btn_font = ("Segoe UI", 13, "bold")
 
         self.btn_a = ctk.CTkButton(
-            ctrl, text="POSITION A\nSolenoid A", height=btn_h, corner_radius=10,
-            fg_color="#1d4ed8", hover_color="#2563eb", font=btn_font,
+            ctrl,
+            text="POSITION A\nSolenoid A",
+            height=btn_h,
+            corner_radius=10,
+            fg_color="#1d4ed8",
+            hover_color="#2563eb",
+            font=btn_font,
             command=lambda: self._send("A"),
         )
         self.btn_a.grid(row=1, column=0, padx=(16, 5), pady=(6, 16), sticky="ew")
 
         self.btn_b = ctk.CTkButton(
-            ctrl, text="POSITION B\nSolenoid B", height=btn_h, corner_radius=10,
-            fg_color="#c2410c", hover_color="#ea580c", font=btn_font,
+            ctrl,
+            text="POSITION B\nSolenoid B",
+            height=btn_h,
+            corner_radius=10,
+            fg_color="#c2410c",
+            hover_color="#ea580c",
+            font=btn_font,
             command=lambda: self._send("B"),
         )
         self.btn_b.grid(row=1, column=1, padx=(5, 16), pady=(6, 16), sticky="ew")
@@ -470,72 +563,117 @@ class ValveApp(ctk.CTk):
         seq.grid_rowconfigure(2, weight=1)
 
         self._section_label(seq, "Sequence Builder").grid(
-            row=0, column=0, padx=16, pady=(10, 6), sticky="w",
+            row=0,
+            column=0,
+            padx=16,
+            pady=(10, 6),
+            sticky="w",
         )
 
         editor = ctk.CTkFrame(seq, fg_color="transparent")
         editor.grid(row=1, column=0, padx=12, pady=(0, 4), sticky="ew")
 
         ctk.CTkLabel(
-            editor, text="State", font=("Segoe UI", 12), text_color="#cbd5e1",
+            editor,
+            text="State",
+            font=("Segoe UI", 12),
+            text_color="#cbd5e1",
         ).grid(row=0, column=0, padx=(4, 6), pady=5)
 
         self.seq_state_var = ctk.StringVar(value="A")
         self.seq_state_menu = ctk.CTkOptionMenu(
-            editor, variable=self.seq_state_var, values=["A", "B"],
-            width=70, corner_radius=8, font=("Segoe UI", 12),
-            fg_color="#334155", button_color="#475569", button_hover_color="#64748b",
+            editor,
+            variable=self.seq_state_var,
+            values=["A", "B"],
+            width=70,
+            corner_radius=8,
+            font=("Segoe UI", 12),
+            fg_color="#334155",
+            button_color="#475569",
+            button_hover_color="#64748b",
         )
         self.seq_state_menu.grid(row=0, column=1, padx=3, pady=5)
 
         ctk.CTkLabel(
-            editor, text="Duration (s)", font=("Segoe UI", 12),
+            editor,
+            text="Duration (s)",
+            font=("Segoe UI", 12),
             text_color="#cbd5e1",
         ).grid(row=0, column=2, padx=(10, 6), pady=5)
 
         self.seq_duration_var = ctk.StringVar(value="1.0")
         self.seq_duration_entry = ctk.CTkEntry(
-            editor, textvariable=self.seq_duration_var, width=75, corner_radius=8,
-            font=("Segoe UI", 12), fg_color="#0f172a", border_color="#334155",
+            editor,
+            textvariable=self.seq_duration_var,
+            width=75,
+            corner_radius=8,
+            font=("Segoe UI", 12),
+            fg_color="#0f172a",
+            border_color="#334155",
         )
         self.seq_duration_entry.grid(row=0, column=3, padx=3, pady=5)
 
-        sb = lambda **k: ctk.CTkButton(editor, corner_radius=btn_r, font=("Segoe UI", 11), **k)
+        sb = lambda **k: ctk.CTkButton(
+            editor, corner_radius=btn_r, font=("Segoe UI", 11), **k
+        )
 
         self.seq_add_btn = sb(
-            text="+ Add", width=72, command=self._add_sequence_step,
-            fg_color="#0f766e", hover_color="#0d9488", text_color="#ccfbf1",
+            text="+ Add",
+            width=72,
+            command=self._add_sequence_step,
+            fg_color="#0f766e",
+            hover_color="#0d9488",
+            text_color="#ccfbf1",
         )
         self.seq_add_btn.grid(row=0, column=4, padx=3, pady=5)
 
         self.seq_edit_btn = sb(
-            text="Edit", width=62, command=self._edit_selected_step,
-            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
+            text="Edit",
+            width=62,
+            command=self._edit_selected_step,
+            fg_color="#334155",
+            hover_color="#475569",
+            text_color="#cbd5e1",
         )
         self.seq_edit_btn.grid(row=0, column=5, padx=3, pady=5)
 
         self.seq_remove_btn = sb(
-            text="Remove", width=72, command=self._remove_sequence_step,
-            fg_color="#7f1d1d", hover_color="#991b1b", text_color="#fecaca",
+            text="Remove",
+            width=72,
+            command=self._remove_sequence_step,
+            fg_color="#7f1d1d",
+            hover_color="#991b1b",
+            text_color="#fecaca",
         )
         self.seq_remove_btn.grid(row=0, column=6, padx=3, pady=5)
 
         self.seq_clear_btn = sb(
-            text="Clear", width=62, command=self._clear_sequence_steps,
-            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
+            text="Clear",
+            width=62,
+            command=self._clear_sequence_steps,
+            fg_color="#334155",
+            hover_color="#475569",
+            text_color="#cbd5e1",
         )
         self.seq_clear_btn.grid(row=0, column=7, padx=3, pady=5)
 
         self.seq_demo_btn = sb(
-            text="Demo", width=62, command=self._load_demo_sequence,
-            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
+            text="Demo",
+            width=62,
+            command=self._load_demo_sequence,
+            fg_color="#334155",
+            hover_color="#475569",
+            text_color="#cbd5e1",
         )
         self.seq_demo_btn.grid(row=0, column=8, padx=3, pady=5)
 
         # Sequence table
         table_frame = ctk.CTkFrame(
-            seq, corner_radius=8, fg_color="#0f172a",
-            border_width=1, border_color="#1e293b",
+            seq,
+            corner_radius=8,
+            fg_color="#0f172a",
+            border_width=1,
+            border_color="#1e293b",
         )
         table_frame.grid(row=2, column=0, padx=16, pady=4, sticky="nsew")
         table_frame.grid_columnconfigure(0, weight=1)
@@ -545,13 +683,20 @@ class ValveApp(ctk.CTk):
         style.theme_use("clam")
         style.configure(
             "Seq.Treeview",
-            background="#0f172a", foreground="#e2e8f0", fieldbackground="#0f172a",
-            borderwidth=0, font=("Segoe UI", 11), rowheight=32,
+            background="#0f172a",
+            foreground="#e2e8f0",
+            fieldbackground="#0f172a",
+            borderwidth=0,
+            font=("Segoe UI", 11),
+            rowheight=32,
         )
         style.configure(
             "Seq.Treeview.Heading",
-            background="#1e293b", foreground="#94a3b8",
-            font=("Segoe UI", 10, "bold"), borderwidth=0, relief="flat",
+            background="#1e293b",
+            foreground="#94a3b8",
+            font=("Segoe UI", 10, "bold"),
+            borderwidth=0,
+            relief="flat",
         )
         style.map(
             "Seq.Treeview",
@@ -560,9 +705,12 @@ class ValveApp(ctk.CTk):
         )
 
         self.seq_table = ttk.Treeview(
-            table_frame, columns=("num", "state", "duration"),
-            show="headings", selectmode="browse",
-            style="Seq.Treeview", height=8,
+            table_frame,
+            columns=("num", "state", "duration"),
+            show="headings",
+            selectmode="browse",
+            style="Seq.Treeview",
+            height=8,
         )
         self.seq_table.heading("num", text="#")
         self.seq_table.heading("state", text="State")
@@ -573,7 +721,9 @@ class ValveApp(ctk.CTk):
         self.seq_table.grid(row=0, column=0, sticky="nsew", padx=(1, 0), pady=1)
 
         scrollbar = ttk.Scrollbar(
-            table_frame, orient="vertical", command=self.seq_table.yview,
+            table_frame,
+            orient="vertical",
+            command=self.seq_table.yview,
         )
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.seq_table.configure(yscrollcommand=scrollbar.set)
@@ -588,16 +738,28 @@ class ValveApp(ctk.CTk):
         action_bar.grid_columnconfigure(2, weight=1)
 
         self.seq_up_btn = ctk.CTkButton(
-            action_bar, text="\u25B2  Up", width=70, corner_radius=btn_r,
-            command=self._move_step_up, font=("Segoe UI", 11),
-            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
+            action_bar,
+            text="\u25b2  Up",
+            width=70,
+            corner_radius=btn_r,
+            command=self._move_step_up,
+            font=("Segoe UI", 11),
+            fg_color="#334155",
+            hover_color="#475569",
+            text_color="#cbd5e1",
         )
         self.seq_up_btn.grid(row=0, column=0, padx=(4, 3), pady=4)
 
         self.seq_down_btn = ctk.CTkButton(
-            action_bar, text="\u25BC  Down", width=78, corner_radius=btn_r,
-            command=self._move_step_down, font=("Segoe UI", 11),
-            fg_color="#334155", hover_color="#475569", text_color="#cbd5e1",
+            action_bar,
+            text="\u25bc  Down",
+            width=78,
+            corner_radius=btn_r,
+            command=self._move_step_down,
+            font=("Segoe UI", 11),
+            fg_color="#334155",
+            hover_color="#475569",
+            text_color="#cbd5e1",
         )
         self.seq_down_btn.grid(row=0, column=1, padx=3, pady=4)
 
@@ -605,25 +767,38 @@ class ValveApp(ctk.CTk):
         spacer.grid(row=0, column=2)
 
         self.seq_run_once_btn = ctk.CTkButton(
-            action_bar, text="\u25B6  Run Once", width=105, corner_radius=btn_r,
+            action_bar,
+            text="\u25b6  Run Once",
+            width=105,
+            corner_radius=btn_r,
             command=lambda: self._start_sequence(loop_mode=False),
             font=("Segoe UI", 12, "bold"),
-            fg_color="#1d4ed8", hover_color="#2563eb",
+            fg_color="#1d4ed8",
+            hover_color="#2563eb",
         )
         self.seq_run_once_btn.grid(row=0, column=3, padx=3, pady=4)
 
         self.seq_run_loop_btn = ctk.CTkButton(
-            action_bar, text="\u21BB  Loop", width=88, corner_radius=btn_r,
+            action_bar,
+            text="\u21bb  Loop",
+            width=88,
+            corner_radius=btn_r,
             command=lambda: self._start_sequence(loop_mode=True),
             font=("Segoe UI", 12, "bold"),
-            fg_color="#6d28d9", hover_color="#7c3aed",
+            fg_color="#6d28d9",
+            hover_color="#7c3aed",
         )
         self.seq_run_loop_btn.grid(row=0, column=4, padx=3, pady=4)
 
         self.seq_stop_btn = ctk.CTkButton(
-            action_bar, text="\u25A0  Stop", width=80, corner_radius=btn_r,
-            command=self._stop_sequence, font=("Segoe UI", 12, "bold"),
-            fg_color="#991b1b", hover_color="#b91c1c",
+            action_bar,
+            text="\u25a0  Stop",
+            width=80,
+            corner_radius=btn_r,
+            command=self._stop_sequence,
+            font=("Segoe UI", 12, "bold"),
+            fg_color="#991b1b",
+            hover_color="#b91c1c",
         )
         self.seq_stop_btn.grid(row=0, column=5, padx=(3, 4), pady=4)
 
@@ -632,15 +807,21 @@ class ValveApp(ctk.CTk):
         bottom_bar.grid_columnconfigure(0, weight=1)
 
         self.sequence_status = ctk.CTkLabel(
-            bottom_bar, text="Sequence idle",
-            font=("Segoe UI", 10), text_color=self.TEXT_MUTED, anchor="e",
+            bottom_bar,
+            text="Sequence idle",
+            font=("Segoe UI", 10),
+            text_color=self.TEXT_MUTED,
+            anchor="e",
         )
         self.sequence_status.grid(row=0, column=0, pady=2, sticky="e")
 
         # ── Status bar (fixed at bottom) ──
         self.status_bar = ctk.CTkLabel(
-            self, text="Ready  \u2502  Ctrl +/\u2212 zoom, Ctrl+0 reset",
-            font=("Segoe UI", 10), text_color=self.TEXT_MUTED, anchor="w",
+            self,
+            text="Ready  \u2502  Ctrl +/\u2212 zoom, Ctrl+0 reset",
+            font=("Segoe UI", 10),
+            text_color=self.TEXT_MUTED,
+            anchor="w",
             height=24,
         )
         self.status_bar.grid(row=2, column=0, padx=20, pady=(2, 8), sticky="ew")
@@ -879,8 +1060,11 @@ class ValveApp(ctk.CTk):
             return
 
         probed_ser = None
-        if (self._probed_serial and self._probed_serial.is_open
-                and self._probed_port == port):
+        if (
+            self._probed_serial
+            and self._probed_serial.is_open
+            and self._probed_port == port
+        ):
             probed_ser = self._probed_serial
             self._probed_serial = None
             self._probed_port = None
@@ -923,7 +1107,7 @@ class ValveApp(ctk.CTk):
             self.current_state = state
             self._show_state(state)
             self.connected_port_label.configure(
-                text=f"\u25CF  Connected on {port}",
+                text=f"\u25cf  Connected on {port}",
                 text_color="#4ade80",
             )
             self.status_bar.configure(text=f"Connected on {port}")
@@ -1308,7 +1492,9 @@ class ValveApp(ctk.CTk):
             self.connect_btn.configure(
                 text="Disconnect",
                 state="normal" if not self.busy else "disabled",
-                fg_color="#991b1b", hover_color="#b91c1c", text_color="#fecaca",
+                fg_color="#991b1b",
+                hover_color="#b91c1c",
+                text_color="#fecaca",
             )
             self.port_menu.configure(state="disabled")
             self.refresh_btn.configure(state="disabled")
@@ -1317,7 +1503,9 @@ class ValveApp(ctk.CTk):
             self.connect_btn.configure(
                 text="Connect",
                 state="normal" if not self.busy else "disabled",
-                fg_color="#166534", hover_color="#15803d", text_color="#bbf7d0",
+                fg_color="#166534",
+                hover_color="#15803d",
+                text_color="#bbf7d0",
             )
             self.port_menu.configure(state="normal")
             self.refresh_btn.configure(state="normal")

@@ -84,8 +84,8 @@ it mechanically even when both solenoids are turned off.
 
 | Position | Solenoid A | Solenoid B | Air Flow |
 |----------|-----------|-----------|----------|
-| **A** | ON | OFF | P → A, B → EB (exhaust) |
-| **B** | OFF | ON | P → B, A → EA (exhaust) |
+| **A** | PULSE (150 ms) | OFF | P → A, B → EB (exhaust) |
+| **B** | OFF | PULSE (150 ms) | P → B, A → EA (exhaust) |
 
 > **Bistable behaviour:** When both solenoids are off, the valve stays in
 > whichever position it was last switched to. There is no spring return and
@@ -256,8 +256,8 @@ We use **NO** so that power-off = solenoids off = valve holds last position (saf
 5. Click **Upload** (arrow button)
 6. Open **Serial Monitor** at **9600 baud** — you should see `READY`
 7. Test commands manually:
-   - Type `A` + Enter → response: `OK:A` (Relay 1 clicks ON — valve to Position A)
-   - Type `B` + Enter → response: `OK:B` (Relay 2 clicks ON — valve to Position B)
+   - Type `A` + Enter → response: `OK:A` (Relay 1 pulses 150ms then opens — valve latches to Position A)
+   - Type `B` + Enter → response: `OK:B` (Relay 2 pulses 150ms then opens — valve latches to Position B)
    - Type `?` + Enter → response: `STATE:A` or `STATE:B` (current position)
    - Press hardware A/B button → Arduino sends `BTN:A` or `BTN:B`
 8. **Close Serial Monitor** before running the Python UI
@@ -290,8 +290,8 @@ python valve_ui.py
 
 | Button | Color | Action |
 |--------|-------|--------|
-| **POSITION A** | Blue | Energizes Solenoid A: P → A, B → Exhaust |
-| **POSITION B** | Orange | Energizes Solenoid B: P → B, A → Exhaust |
+| **POSITION A** | Blue | Pulses Solenoid A (150ms): valve latches — P → A, B → Exhaust |
+| **POSITION B** | Orange | Pulses Solenoid B (150ms): valve latches — P → B, A → Exhaust |
 
 5. Use the **Sequence Builder** to automate repeatable patterns:
    - Pick a state (`A` or `B`) and a duration, then click **+ Add**
@@ -313,12 +313,12 @@ python valve_ui.py
 
 | Rule | Why |
 |------|-----|
-| Both solenoids never ON simultaneously | `applyOutputs()` always sets one LOW before the other HIGH |
+| Both solenoids never ON simultaneously | `pulseValve()` energises only one solenoid per pulse, then de-energises both |
 | EEPROM state persistence | If the relay power draw resets the Arduino, it restores the last state on boot |
 | Single-reset probe handoff | Detect Arduino keeps the serial connection open so Connect reuses it — only one Arduino reset |
 | Bistable latch on disconnect | Closing the UI just drops serial — valve stays in last position, no unexpected movement |
 | NO relay terminals used | If Arduino resets or loses power, relays open → solenoids OFF → valve holds position |
-| Onboard LED (Pin 13) mirrors state | Quick visual — LED ON = a solenoid is energised |
+| Onboard LED (Pin 13) blinks on actuation | Quick visual — LED flashes for 150ms each time a solenoid pulse fires |
 | EMI guard on buttons (400ms) | Relay switching noise can't trigger false button presses |
 | Hardware A/B buttons have 200ms debounce | Prevents accidental multi-triggering |
 | Buttons work without PC connected | Arduino runs standalone — useful for field testing |
